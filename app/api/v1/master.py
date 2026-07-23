@@ -1,7 +1,9 @@
 """Master data CRUD endpoints: village hierarchy, family cards, residents."""
+import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
@@ -23,12 +25,14 @@ from app.schemas.master import (
     RWRead,
     RWUpdate,
     ResidentCreate,
+    ResidentImportResult,
     ResidentRead,
     ResidentUpdate,
     VillageCreate,
     VillageRead,
     VillageUpdate,
 )
+from app.services.excel import ResidentExcelService
 from app.services.master import (
     DusunService,
     FamilyCardService,
@@ -363,6 +367,34 @@ async def list_residents(
         p.page, p.size, filters=filters, search=search
     )
     return success_response(_page(items, total, p, ResidentRead))
+
+
+@router.post("/residents/import", response_model=Envelope[ResidentImportResult])
+async def import_residents(
+    village_id: UUID,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("resident:import")),
+) -> dict:
+    """Bulk-import residents for a village from an uploaded xlsx file."""
+    content = await file.read()
+    result = await ResidentExcelService(session).import_bytes(content, village_id)
+    return success_response(result, "Import selesai")
+
+
+@router.get("/residents/export")
+async def export_residents(
+    village_id: UUID | None = Query(None),
+    session: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("resident:export")),
+) -> StreamingResponse:
+    """Export residents matching the given filters as an xlsx download."""
+    data = await ResidentExcelService(session).export_bytes({"village_id": village_id})
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=residents.xlsx"},
+    )
 
 
 @router.get("/residents/{item_id}", response_model=Envelope[ResidentRead])
