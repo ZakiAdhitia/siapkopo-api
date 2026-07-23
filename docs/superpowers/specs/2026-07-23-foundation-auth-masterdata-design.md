@@ -122,9 +122,10 @@ Cakupan:
 - `Role` — id, name (unik), display_name, description.
 - `Permission` — id, code (unik, mis. `resident:create`), description.
 - `role_permissions` — M2M Role↔Permission.
-- `User` — id, username (unik, nullable utk warga murni?), nik (unik, nullable),
-  full_name, hashed_password (nullable utk warga OTP-only), phone, role_id (FK),
-  resident_id (FK, nullable), is_active, timestamps, soft-delete.
+- `User` — id, username (unik, **nullable** — hanya diisi untuk akun staf yang login
+  password; warga login via NIK+OTP sehingga username kosong), nik (unik, nullable —
+  diisi untuk warga), full_name, hashed_password (nullable — kosong untuk warga OTP-only),
+  phone, role_id (FK), resident_id (FK, nullable), is_active, timestamps, soft-delete.
 - `RefreshToken` — id, user_id (FK), token_hash, expires_at, revoked_at, created_at.
   (Refresh token disimpan ter-hash; rotasi saat refresh.)
 - **OTP** & **blacklist access-token (jti)** → Redis (TTL), bukan Postgres.
