@@ -6,8 +6,11 @@ from sqlalchemy import Column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
+from app.core.logging import get_logger
 from app.models.master import RT, RW, Dusun, FamilyCard, Resident, Village
 from app.repositories.base import BaseRepository
+
+logger = get_logger("master")
 
 
 class _CrudService:
@@ -29,6 +32,7 @@ class _CrudService:
         """Create and persist a new row from validated input data."""
         obj = await self.repo.create(**data)
         await self.session.commit()
+        logger.info("%s created id=%s", self.name, obj.id)
         return obj
 
     async def get_or_404(self, id_: uuid.UUID) -> Any:
@@ -56,6 +60,7 @@ class _CrudService:
         obj = await self.get_or_404(id_)
         obj = await self.repo.update(obj, **data)
         await self.session.commit()
+        logger.info("%s updated id=%s", self.name, id_)
         return obj
 
     async def delete(self, id_: uuid.UUID) -> None:
@@ -63,6 +68,7 @@ class _CrudService:
         obj = await self.get_or_404(id_)
         await self.repo.soft_delete(obj)
         await self.session.commit()
+        logger.info("%s deleted id=%s", self.name, id_)
 
 
 class VillageService(_CrudService):

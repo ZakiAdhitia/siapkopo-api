@@ -133,3 +133,17 @@ class ResidentRead(_Read):
     occupation: str | None = None
     phone: str | None = None
     address: str | None = None
+
+
+class ResidentImportError(BaseModel):
+    """A single row-level failure from a resident Excel import."""
+
+    row: int
+    message: str
+
+
+class ResidentImportResult(BaseModel):
+    """Outcome of a resident Excel import: counts + per-row errors."""
+
+    imported: int
+    errors: list[ResidentImportError] = []
