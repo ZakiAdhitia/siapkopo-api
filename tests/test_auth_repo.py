@@ -1,5 +1,5 @@
 import pytest
-from app.repositories.auth import UserRepository, RefreshTokenRepository
+from app.repositories.auth import UserRepository
 
 
 @pytest.mark.asyncio
