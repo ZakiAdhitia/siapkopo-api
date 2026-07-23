@@ -11,6 +11,7 @@ from app.core.security import (
     create_access_token, create_refresh_token_value, hash_token, verify_password,
 )
 from app.models.auth import User
+from app.permissions.registry import ROLE_PERMISSIONS
 from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.services.otp import OtpService
 
@@ -27,7 +28,15 @@ class AuthService:
         self.settings = get_settings()
 
     def permissions_for(self, user: User) -> list[str]:
-        """Resolve effective permission codes for a user from its role."""
+        """Resolve effective permission codes for a user from its role.
+
+        Roles registered in the RBAC registry with the wildcard sentinel
+        (``["*"]``) collapse to a single ``"*"`` entry so the JWT/permission
+        check can grant everything without enumerating every code; all other
+        roles report the concrete codes actually granted in the database.
+        """
+        if ROLE_PERMISSIONS.get(user.role.name) == ["*"]:
+            return ["*"]
         return [p.code for p in user.role.permissions]
 
     async def _issue(self, user: User) -> dict:
