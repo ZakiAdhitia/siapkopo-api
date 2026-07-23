@@ -1,4 +1,4 @@
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import NotFoundError, AppException
 from app.core.response import success_response, error_response
 
@@ -7,6 +7,13 @@ def test_settings_load():
     s = get_settings()
     assert s.api_v1_prefix == "/api/v1"
     assert isinstance(s.cors_origins, list)
+
+
+def test_cors_origins_parses_comma_string(monkeypatch):
+    """A plain comma-separated CORS_ORIGINS env value must not be JSON-decoded."""
+    monkeypatch.setenv("CORS_ORIGINS", "http://a.test, http://b.test")
+    s = Settings(_env_file=None)
+    assert s.cors_origins == ["http://a.test", "http://b.test"]
 
 
 def test_not_found_is_app_exception():

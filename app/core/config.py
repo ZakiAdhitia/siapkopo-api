@@ -1,8 +1,9 @@
 """Application settings loaded from environment."""
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,7 +25,9 @@ class Settings(BaseSettings):
     otp_ttl_seconds: int = 300
     otp_length: int = 6
 
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # NoDecode stops pydantic-settings from JSON-decoding the raw env value,
+    # so the validator below can split a plain comma-separated string.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
