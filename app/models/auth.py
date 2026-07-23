@@ -46,8 +46,9 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"))
-    # TODO(master): add FK to residents.id in the master-data migration
-    resident_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    resident_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("residents.id"), nullable=True
+    )
     role: Mapped[Role] = relationship(lazy="selectin")
 
 
