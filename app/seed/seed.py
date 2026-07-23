@@ -11,9 +11,15 @@ from app.permissions.registry import (
 
 async def seed_rbac(session: AsyncSession) -> None:
     """Seed permissions, roles, role-permission mappings, and demo users."""
-    # Permissions
+    # Permissions: union of the concrete PERMISSIONS list and every code
+    # referenced by any role (including the "*" wildcard sentinel), so the
+    # wildcard is a real DB row and permission resolution stays purely
+    # data-driven (no static-registry short-circuit at read time).
+    all_codes = set(PERMISSIONS) | {
+        code for codes in ROLE_PERMISSIONS.values() for code in codes
+    }
     existing_perms = {p.code: p for p in (await session.scalars(select(Permission))).all()}
-    for code in PERMISSIONS:
+    for code in all_codes:
         if code not in existing_perms:
             p = Permission(code=code)
             session.add(p)
@@ -28,11 +34,7 @@ async def seed_rbac(session: AsyncSession) -> None:
             role = Role(name=name, display_name=display)
             session.add(role)
             existing_roles[name] = role
-        codes = ROLE_PERMISSIONS[name]
-        role.permissions = (
-            list(existing_perms.values()) if codes == ["*"]
-            else [existing_perms[c] for c in codes]
-        )
+        role.permissions = [existing_perms[c] for c in ROLE_PERMISSIONS[name]]
     await session.flush()
 
     # Demo users

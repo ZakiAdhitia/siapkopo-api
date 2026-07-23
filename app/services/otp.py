@@ -22,7 +22,10 @@ class OtpService:
         """Generate an OTP, store with TTL, return it (dev delivery)."""
         code = "".join(secrets.choice("0123456789") for _ in range(self.settings.otp_length))
         await self.redis.set(self._key(nik), code, ex=self.settings.otp_ttl_seconds)
-        logger.info("OTP for %s: %s (dev)", nik, code)
+        if self.settings.app_env != "production":
+            logger.info("OTP for %s: %s (dev)", nik, code)
+        else:
+            logger.info("OTP generated for %s", nik)
         return code
 
     async def verify_otp(self, nik: str, code: str) -> bool:

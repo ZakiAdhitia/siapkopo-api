@@ -6,14 +6,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.exceptions import UnauthorizedError
+from app.core.logging import get_logger
 from app.core.redis import get_redis
 from app.core.security import (
     create_access_token, create_refresh_token_value, hash_token, verify_password,
 )
 from app.models.auth import User
-from app.permissions.registry import ROLE_PERMISSIONS
 from app.repositories.auth import RefreshTokenRepository, UserRepository
 from app.services.otp import OtpService
+
+logger = get_logger("auth")
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    """Normalize a possibly-naive datetime to timezone-aware UTC.
+
+    SQLite (used in tests) returns naive datetimes for ``DateTime(timezone=True)``
+    columns; PostgreSQL returns aware ones. Comparing naive vs aware raises
+    ``TypeError``, so every expiry comparison must go through this first.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class AuthService:
@@ -30,13 +44,10 @@ class AuthService:
     def permissions_for(self, user: User) -> list[str]:
         """Resolve effective permission codes for a user from its role.
 
-        Roles registered in the RBAC registry with the wildcard sentinel
-        (``["*"]``) collapse to a single ``"*"`` entry so the JWT/permission
-        check can grant everything without enumerating every code; all other
-        roles report the concrete codes actually granted in the database.
+        Purely data-driven from the database: whatever permission rows are
+        assigned to the user's role (including a literal ``"*"`` row for
+        wildcard roles) are returned as-is.
         """
-        if ROLE_PERMISSIONS.get(user.role.name) == ["*"]:
-            return ["*"]
         return [p.code for p in user.role.permissions]
 
     async def _issue(self, user: User) -> dict:
@@ -57,26 +68,35 @@ class AuthService:
 
     async def login_password(self, username: str, password: str) -> dict:
         """Authenticate a staff user by username + password."""
-        user = await self.users.get_by_username(username.strip().lower())
+        clean_username = username.strip().lower()
+        user = await self.users.get_by_username(clean_username)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
+            logger.warning("Login gagal untuk username=%s", clean_username)
             raise UnauthorizedError("Username atau kata sandi salah")
         if not user.is_active:
+            logger.warning("Login ditolak (akun tidak aktif) untuk username=%s", clean_username)
             raise UnauthorizedError("Akun tidak aktif")
-        return await self._issue(user)
+        result = await self._issue(user)
+        logger.info("Login sukses user_id=%s role=%s", user.id, user.role.name)
+        return result
 
     async def login_otp(self, nik: str, code: str) -> dict:
         """Authenticate a warga by NIK + OTP."""
         if not await self.otp.verify_otp(nik, code):
+            logger.warning("Login OTP gagal untuk nik=%s", nik)
             raise UnauthorizedError("Kode OTP salah atau kedaluwarsa")
         user = await self.users.get_by_nik(nik)
         if not user or not user.is_active:
+            logger.warning("Login OTP ditolak (warga tidak terdaftar) untuk nik=%s", nik)
             raise UnauthorizedError("Warga tidak terdaftar")
-        return await self._issue(user)
+        result = await self._issue(user)
+        logger.info("Login OTP sukses user_id=%s role=%s", user.id, user.role.name)
+        return result
 
     async def refresh(self, raw_refresh: str) -> dict:
         """Rotate a refresh token and issue a new pair."""
         token = await self.refresh_tokens.get_active_by_hash(hash_token(raw_refresh))
-        if not token or token.expires_at < datetime.now(timezone.utc):
+        if not token or _as_aware_utc(token.expires_at) < datetime.now(timezone.utc):
             raise UnauthorizedError("Refresh token tidak valid")
         await self.refresh_tokens.revoke(token)
         user = await self.users.get_by_id(token.user_id)
@@ -96,6 +116,7 @@ class AuthService:
             if token:
                 await self.refresh_tokens.revoke(token)
                 await self.session.commit()
+        logger.info("Logout jti=%s", jti)
 
     async def is_blacklisted(self, jti: str) -> bool:
         """Return True if an access jti has been blacklisted."""
