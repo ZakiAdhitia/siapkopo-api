@@ -5,7 +5,7 @@ import openpyxl
 import pytest
 
 from app.services.excel import ResidentExcelService
-from app.services.master import VillageService
+from app.services.master import ResidentService, VillageService
 
 
 def _wb(rows):
@@ -34,6 +34,37 @@ async def test_import_residents(db_session):
     assert result["imported"] == 1
     assert len(result["errors"]) == 1
     assert result["errors"][0]["row"] == 3
+
+
+@pytest.mark.asyncio
+async def test_import_duplicate_nik_isolated_by_savepoint(db_session):
+    """A duplicate-NIK row must not poison the transaction or lose other rows.
+
+    The 2nd data row reuses the 1st row's NIK, which violates the DB-level
+    unique constraint on Resident.nik during flush. That row's failure must
+    be isolated to its own SAVEPOINT so the 1st (valid) and 3rd (valid,
+    distinct NIK) rows still import and commit, with no exception escaping
+    and the duplicate reported in errors.
+    """
+    village = await VillageService(db_session).create({"name": "Desa Kopo"})
+    data = _wb(
+        [
+            ["3301", "Warga Pertama", "L", "Bogor", "1990-01-01", "Petani", "0812", "Jl A"],
+            ["3301", "Warga Duplikat", "L", "Bogor", "1991-01-01", "Guru", "0813", "Jl B"],
+            ["3302", "Warga Ketiga", "P", "Bogor", "1992-01-01", "Guru", "0814", "Jl C"],
+        ]
+    )
+    result = await ResidentExcelService(db_session).import_bytes(data, village.id)
+
+    assert result["imported"] == 2
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["row"] == 3
+
+    residents, total = await ResidentService(db_session).list(
+        page=1, size=100, filters={"village_id": village.id}
+    )
+    assert total == 2
+    assert {r.nik for r in residents} == {"3301", "3302"}
 
 
 @pytest.mark.asyncio

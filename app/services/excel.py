@@ -51,21 +51,27 @@ class ResidentExcelService:
         for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             record = dict(zip(header, row))
             try:
-                nik = str(record.get("nik") or "").strip()
-                name = str(record.get("full_name") or "").strip()
-                if not nik or not name:
-                    raise ValueError("nik dan full_name wajib diisi")
-                await self.residents.repo.create(
-                    village_id=village_id,
-                    nik=nik,
-                    full_name=name,
-                    gender=(record.get("gender") or None),
-                    birth_place=(record.get("birth_place") or None),
-                    birth_date=self._parse_date(record.get("birth_date")),
-                    occupation=(record.get("occupation") or None),
-                    phone=(str(record["phone"]) if record.get("phone") else None),
-                    address=(record.get("address") or None),
-                )
+                # Each row runs inside its own SAVEPOINT so a DB-level failure
+                # (e.g. IntegrityError from a duplicate NIK) only rolls back
+                # this row instead of poisoning the whole outer transaction,
+                # which would otherwise turn every later flush/commit into a
+                # PendingRollbackError and lose all previously-valid rows.
+                async with self.session.begin_nested():
+                    nik = str(record.get("nik") or "").strip()
+                    name = str(record.get("full_name") or "").strip()
+                    if not nik or not name:
+                        raise ValueError("nik dan full_name wajib diisi")
+                    await self.residents.repo.create(
+                        village_id=village_id,
+                        nik=nik,
+                        full_name=name,
+                        gender=(record.get("gender") or None),
+                        birth_place=(record.get("birth_place") or None),
+                        birth_date=self._parse_date(record.get("birth_date")),
+                        occupation=(record.get("occupation") or None),
+                        phone=(str(record["phone"]) if record.get("phone") else None),
+                        address=(record.get("address") or None),
+                    )
                 imported += 1
             except Exception as exc:  # row-level failure isolated
                 errors.append({"row": idx, "message": str(exc)})

@@ -124,6 +124,31 @@ async def test_resident_crud_search_and_filter(client):
 
 
 @pytest.mark.asyncio
+async def test_resident_create_duplicate_nik_returns_409(client):
+    """A DB-level unique-constraint violation must surface as 409 CONFLICT, not 500."""
+    h = await _auth_headers(client)
+    v = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
+    vid = v.json()["data"]["id"]
+
+    first = await client.post(
+        "/api/v1/residents",
+        json={"nik": "5555555555555555", "full_name": "Warga Pertama", "village_id": vid},
+        headers=h,
+    )
+    assert first.status_code == 200
+
+    dup = await client.post(
+        "/api/v1/residents",
+        json={"nik": "5555555555555555", "full_name": "Warga Duplikat", "village_id": vid},
+        headers=h,
+    )
+    assert dup.status_code == 409
+    body = dup.json()
+    assert body["success"] is False
+    assert body["error_code"] == "CONFLICT"
+
+
+@pytest.mark.asyncio
 async def test_resident_requires_permission(client):
     # kades has only resident:read — creating must 403
     v = await client.post(

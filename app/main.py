@@ -4,6 +4,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1 import api_router
@@ -22,6 +23,9 @@ _HTTP_ERROR_CODES = {
     403: "FORBIDDEN",
 }
 
+# Default JWT secrets that must never be used in production.
+_INSECURE_JWT_SECRETS = {"change-me", "change-me-in-production"}
+
 
 def create_app() -> FastAPI:
     """Build and configure the FastAPI app.
@@ -35,6 +39,18 @@ def create_app() -> FastAPI:
     """
     configure_logging()
     settings = get_settings()
+
+    if settings.jwt_secret in _INSECURE_JWT_SECRETS:
+        if settings.app_env == "production":
+            raise RuntimeError(
+                "JWT_SECRET must be set to a strong value in production"
+            )
+        logger.warning(
+            "Using an insecure default JWT_SECRET (%s). Set a strong secret "
+            "before deploying to production.",
+            settings.jwt_secret,
+        )
+
     app = FastAPI(title=settings.app_name)
 
     app.add_middleware(
@@ -66,6 +82,14 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content=error_response(str(exc.detail), error_code),
+        )
+
+    @app.exception_handler(IntegrityError)
+    async def _integrity_exc(_: Request, exc: IntegrityError) -> JSONResponse:
+        logger.warning("IntegrityError: %s", exc)
+        return JSONResponse(
+            status_code=409,
+            content=error_response("Data melanggar batasan unik atau relasi", "CONFLICT"),
         )
 
     @app.exception_handler(Exception)

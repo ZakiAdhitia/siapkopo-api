@@ -1,6 +1,9 @@
+import pytest
+
 from app.core.config import Settings, get_settings
 from app.core.exceptions import NotFoundError, AppException
 from app.core.response import success_response, error_response
+from app.main import create_app
 
 
 def test_settings_load():
@@ -28,3 +31,15 @@ def test_envelope_helpers():
     assert ok == {"success": True, "message": "done", "data": {"id": 1}}
     bad = error_response("nope", "NOT_FOUND")
     assert bad == {"success": False, "message": "nope", "error_code": "NOT_FOUND", "data": None}
+
+
+def test_create_app_rejects_default_jwt_secret_in_production(monkeypatch):
+    """create_app() must refuse to start in production with the default JWT secret."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="JWT_SECRET"):
+            create_app()
+    finally:
+        get_settings.cache_clear()
