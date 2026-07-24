@@ -325,25 +325,23 @@ async def list_residents(
 
 @router.post("/residents/import", response_model=Envelope[ResidentImportResult])
 async def import_residents(
-    village_id: UUID,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("resident:import")),
 ) -> dict:
-    """Bulk-import residents for a village from an uploaded xlsx file."""
+    """Bulk-import residents from an uploaded xlsx file."""
     content = await file.read()
-    result = await ResidentExcelService(session).import_bytes(content, village_id)
+    result = await ResidentExcelService(session).import_bytes(content)
     return success_response(result, "Import selesai")
 
 
 @router.get("/residents/export")
 async def export_residents(
-    village_id: UUID | None = Query(None),
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("resident:export")),
 ) -> StreamingResponse:
-    """Export residents matching the given filters as an xlsx download."""
-    data = await ResidentExcelService(session).export_bytes({"village_id": village_id})
+    """Export all residents as an xlsx download."""
+    data = await ResidentExcelService(session).export_bytes()
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

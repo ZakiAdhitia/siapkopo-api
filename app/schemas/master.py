@@ -53,7 +53,6 @@ class VillageProfileRead(_Read):
 
 
 class DusunCreate(BaseModel):
-    village_id: UUID
     name: str
 
 
@@ -62,7 +61,6 @@ class DusunUpdate(BaseModel):
 
 
 class DusunRead(_Read):
-    village_id: UUID
     name: str
 
 
@@ -95,7 +93,6 @@ class RTRead(_Read):
 
 
 class FamilyCardCreate(BaseModel):
-    village_id: UUID
     kk_number: str
     address: str | None = None
 
@@ -106,13 +103,11 @@ class FamilyCardUpdate(BaseModel):
 
 
 class FamilyCardRead(_Read):
-    village_id: UUID
     kk_number: str
     address: str | None = None
 
 
 class ResidentCreate(BaseModel):
-    village_id: UUID
     nik: str
     full_name: str
     family_card_id: UUID | None = None
@@ -138,7 +133,6 @@ class ResidentUpdate(BaseModel):
 
 
 class ResidentRead(_Read):
-    village_id: UUID
     nik: str
     full_name: str
     family_card_id: UUID | None = None

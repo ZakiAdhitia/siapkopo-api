@@ -8,17 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base, GUID, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
 
-class Village(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """A single administered village (tenant root for future multi-village support)."""
-
-    __tablename__ = "villages"
-    name: Mapped[str] = mapped_column(String(150), index=True)
-    slogan: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    kecamatan: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    kabupaten: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    provinsi: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
-
 class VillageProfile(UUIDMixin, TimestampMixin, Base):
     """Singleton row describing the (single) village this system serves.
 
@@ -52,7 +41,6 @@ class Dusun(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A hamlet (dusun) belonging to a village."""
 
     __tablename__ = "dusun"
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     name: Mapped[str] = mapped_column(String(100), index=True)
 
 
@@ -76,7 +64,6 @@ class FamilyCard(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A family card (kartu keluarga) grouping residents under one household."""
 
     __tablename__ = "family_cards"
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     kk_number: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Plain column (no FK) to avoid a circular dependency with residents.id.
@@ -87,7 +74,6 @@ class Resident(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A citizen record identified by NIK, optionally linked to a family card and RT."""
 
     __tablename__ = "residents"
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     nik: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(150), index=True)
     family_card_id: Mapped[uuid.UUID | None] = mapped_column(

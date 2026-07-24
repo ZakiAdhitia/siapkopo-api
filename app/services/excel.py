@@ -1,6 +1,5 @@
 """Resident Excel import/export."""
 import io
-import uuid
 from datetime import date, datetime
 from typing import Any
 
@@ -42,7 +41,7 @@ class ResidentExcelService:
             return value
         return datetime.strptime(str(value), "%Y-%m-%d").date()
 
-    async def import_bytes(self, file_bytes: bytes, village_id: uuid.UUID) -> dict:
+    async def import_bytes(self, file_bytes: bytes) -> dict:
         """Import residents from an xlsx file; return counts + per-row errors."""
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
         ws = wb.active
@@ -62,7 +61,6 @@ class ResidentExcelService:
                     if not nik or not name:
                         raise ValueError("nik dan full_name wajib diisi")
                     await self.residents.repo.create(
-                        village_id=village_id,
                         nik=nik,
                         full_name=name,
                         gender=(record.get("gender") or None),
@@ -76,12 +74,7 @@ class ResidentExcelService:
             except Exception as exc:  # row-level failure isolated
                 errors.append({"row": idx, "message": str(exc)})
         await self.session.commit()
-        logger.info(
-            "Resident import village_id=%s imported=%d errors=%d",
-            village_id,
-            imported,
-            len(errors),
-        )
+        logger.info("Resident import imported=%d errors=%d", imported, len(errors))
         return {"imported": imported, "errors": errors}
 
     async def export_bytes(self, filters: dict[str, Any] | None = None) -> bytes:
