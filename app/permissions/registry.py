@@ -7,17 +7,26 @@ PERMISSIONS: list[str] = [
     "resident:import", "resident:export",
     "village:manage", "dusun:manage", "rw:manage", "rt:manage", "family_card:manage",
     "template:manage", "template:read",
+    "submission:create", "submission:read", "submission:read_all",
+    "submission:approve", "submission:reject", "submission:download",
+    "approval_config:manage",
 ]
 
 # Role name -> permission codes. "*" means all permissions.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
-    "warga": ["auth:me"],
+    "warga": ["auth:me", "submission:create", "submission:read", "submission:download"],
     "staf": ["auth:me", "resident:read", "resident:create", "resident:update",
-             "resident:import", "resident:export", "template:read"],
+             "resident:import", "resident:export", "template:read",
+             "submission:read", "submission:read_all", "submission:approve",
+             "submission:reject", "submission:download"],
     "sekretaris": ["auth:me", "resident:read", "resident:update",
                    "village:manage", "dusun:manage", "rw:manage", "rt:manage",
-                   "family_card:manage", "template:read"],
-    "kades": ["auth:me", "resident:read", "template:read"],
+                   "family_card:manage", "template:read",
+                   "submission:read", "submission:read_all", "submission:approve",
+                   "submission:reject", "submission:download"],
+    "kades": ["auth:me", "resident:read", "template:read",
+              "submission:read", "submission:read_all", "submission:approve",
+              "submission:reject", "submission:download"],
     "administrator": ["*"],
 }
 
