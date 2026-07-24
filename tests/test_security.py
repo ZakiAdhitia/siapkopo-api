@@ -12,10 +12,10 @@ def test_password_roundtrip():
 
 
 def test_access_token_roundtrip():
-    token = create_access_token("user-1", "staf", ["resident:read"], "jti-1")
+    token = create_access_token("user-1", "staff", ["resident:read"], "jti-1")
     payload = decode_token(token)
     assert payload["sub"] == "user-1"
-    assert payload["role"] == "staf"
+    assert payload["role"] == "staff"
     assert "resident:read" in payload["permissions"]
     assert payload["jti"] == "jti-1"
 

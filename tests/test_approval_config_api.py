@@ -22,7 +22,7 @@ async def test_replace_and_list_approval_steps(client, db_session):
         "/api/v1/approval-steps",
         json={
             "village_id": village_id,
-            "steps": [{"role_id": roles["staf"]}, {"role_id": roles["kades"]}],
+            "steps": [{"role_id": roles["staff"]}, {"role_id": roles["admin"]}],
         },
         headers=h,
     )
@@ -36,7 +36,8 @@ async def test_replace_and_list_approval_steps(client, db_session):
 
 @pytest.mark.asyncio
 async def test_replace_requires_manage_permission(client):
-    tok = await _token(client, "kades", "kades123")
+    # staff lacks approval_config:manage (admin -- kades/sekdes -- has it).
+    tok = await _token(client, "staf", "staf123")
     resp = await client.put(
         "/api/v1/approval-steps",
         json={"village_id": "00000000-0000-0000-0000-000000000000", "steps": []},

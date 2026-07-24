@@ -29,7 +29,7 @@ async def test_seed_link_demo_resident_links_matching_person(db_session):
 
 
 @pytest.mark.asyncio
-async def test_seed_approval_steps_default_three_step_chain(db_session):
+async def test_seed_approval_steps_default_two_step_chain(db_session):
     await seed_positions(db_session)
     await seed_rbac(db_session)
     await seed_master(db_session)
@@ -41,18 +41,18 @@ async def test_seed_approval_steps_default_three_step_chain(db_session):
         .where(ApprovalStepConfig.village_id == village.id)
         .order_by(ApprovalStepConfig.order_index)
     )).all())
-    assert len(steps) == 3
+    assert len(steps) == 2
 
     from app.models.auth import Role
     role_names = []
     for step in steps:
         role = await db_session.scalar(select(Role).where(Role.id == step.role_id))
         role_names.append(role.name)
-    assert role_names == ["staf", "sekretaris", "kades"]
+    assert role_names == ["staff", "admin"]
 
     # idempotent
     await seed_approval_steps(db_session)
     steps_again = list((await db_session.scalars(
         select(ApprovalStepConfig).where(ApprovalStepConfig.village_id == village.id)
     )).all())
-    assert len(steps_again) == 3
+    assert len(steps_again) == 2

@@ -195,16 +195,19 @@ class SubmissionService:
     async def resolve_signer_name(self) -> str:
         """Return the Kepala Desa's display name for the signature block.
 
-        Single-village MVP: looks up the (single) user with role 'kades'.
-        A multi-village deployment would need this scoped by village_id —
-        a known, explicitly out-of-scope limitation while only one village
+        Single-village MVP: looks up the (single) user whose Position is
+        Kepala Desa. Role name alone no longer identifies this -- sekretaris_
+        desa and kepala_desa share the "admin" Role, so Position is the only
+        reliable signal (see the 4-role-catalog + Position rework). A
+        multi-village deployment would need this scoped by village_id — a
+        known, explicitly out-of-scope limitation while only one village
         exists in the system.
         """
-        from app.models.auth import Role as _Role
+        from app.models.auth import Position as _Position
         stmt = (
             select(User)
-            .join(_Role, User.role_id == _Role.id)
-            .where(_Role.name == "kades", User.deleted_at.is_(None))
+            .join(_Position, User.position_id == _Position.id)
+            .where(_Position.slug == "kepala_desa", User.deleted_at.is_(None))
             .limit(1)
         )
         kades = await self.session.scalar(stmt)

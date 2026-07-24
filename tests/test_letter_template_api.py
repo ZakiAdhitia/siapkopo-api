@@ -55,19 +55,19 @@ async def test_template_and_field_crud_flow(client):
 
 @pytest.mark.asyncio
 async def test_template_manage_requires_permission(client):
-    # kades has only template:read — creating must 403.
+    # staff has only template:read — creating must 403.
     admin_tok = await _token(client)
     village_id = await _village(client, admin_tok)
-    kades_tok = await _token(client, "kades", "kades123")
+    staf_tok = await _token(client, "staf", "staf123")
     resp = await client.post("/api/v1/templates", json={
         "village_id": village_id, "code": "x", "name": "X", "icon": "i",
         "color_bg": "#fff", "color_fg": "#000", "numbering_prefix": "1",
         "numbering_pattern": "{prefix}/{seq}/{year}", "pdf_body_template": "<p></p>",
-    }, headers={"Authorization": f"Bearer {kades_tok}"})
+    }, headers={"Authorization": f"Bearer {staf_tok}"})
     assert resp.status_code == 403
 
-    # But kades CAN read.
-    listed = await client.get("/api/v1/templates", headers={"Authorization": f"Bearer {kades_tok}"})
+    # But staff CAN read.
+    listed = await client.get("/api/v1/templates", headers={"Authorization": f"Bearer {staf_tok}"})
     assert listed.status_code == 200
 
 

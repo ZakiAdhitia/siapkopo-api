@@ -32,7 +32,7 @@ async def test_public_verify_returns_letter_details_for_issued_code(client, db_s
     template_id = template.json()["data"]["id"]
     roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
     await client.put("/api/v1/approval-steps", json={
-        "village_id": village_id, "steps": [{"role_id": roles["staf"]}],
+        "village_id": village_id, "steps": [{"role_id": roles["staff"]}],
     }, headers=h)
 
     warga_tok = await _token(client, "warga", "warga123")

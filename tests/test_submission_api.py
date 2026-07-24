@@ -32,7 +32,7 @@ async def _setup_village_template_workflow(client, db_session):
     roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
     await client.put("/api/v1/approval-steps", json={
         "village_id": village_id,
-        "steps": [{"role_id": roles["staf"]}, {"role_id": roles["kades"]}],
+        "steps": [{"role_id": roles["staff"]}, {"role_id": roles["admin"]}],
     }, headers=h)
     return village_id, template_id
 
@@ -95,7 +95,7 @@ async def test_approve_wrong_turn_returns_403(client, db_session):
     }, headers={"Authorization": f"Bearer {warga_tok}"})
     submission_id = created.json()["data"]["id"]
 
-    kades_tok = await _token(client, "kades", "kades123")  # staf's turn, not kades
+    kades_tok = await _token(client, "kades", "kades123")  # staff's turn, not admin
     resp = await client.post(
         f"/api/v1/submissions/{submission_id}/approve", json={},
         headers={"Authorization": f"Bearer {kades_tok}"},

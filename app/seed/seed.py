@@ -257,8 +257,16 @@ async def seed_link_demo_rt_rw(session: AsyncSession) -> None:
 
 
 async def seed_approval_steps(session: AsyncSession) -> None:
-    """Seed the default 3-step approval chain (staf, sekretaris, kades)
-    for the seeded village, matching mockData's SETTINGS.approvalMode='3'.
+    """Seed the default 2-step approval chain (staff, admin) for the
+    seeded village.
+
+    Note: mockData's SETTINGS.approvalMode='3' (a 3-step staf/sekretaris/
+    kades chain) no longer maps 1:1 onto the 4-role catalog -- sekretaris_
+    desa and kepala_desa now share the "admin" Role (see Position), so a
+    literal 3-distinct-role chain isn't expressible anymore. This seeds the
+    2-step chain the new catalog supports (staff, then admin); redesigning
+    the approval-chain shape itself belongs to the later Submission/
+    Approval/PDF rework part, not this RBAC/Position part.
 
     Idempotent: skips if the village already has any configured steps.
     """
@@ -276,12 +284,12 @@ async def seed_approval_steps(session: AsyncSession) -> None:
         return
 
     roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
-    for index, role_name in enumerate(("staf", "sekretaris", "kades")):
+    for index, role_name in enumerate(("staff", "admin")):
         session.add(ApprovalStepConfig(
             village_id=village.id, order_index=index, role_id=roles[role_name].id
         ))
     await session.commit()
-    logger.info("seed_approval_steps: seeded 3-step chain for village_id=%s", village.id)
+    logger.info("seed_approval_steps: seeded 2-step chain for village_id=%s", village.id)
 
 
 async def seed_all(session: AsyncSession) -> None:
