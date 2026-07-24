@@ -6,9 +6,12 @@ SQLAlchemy (async), PostgreSQL, Redis, and Alembic, following Clean Architecture
 
 This repository currently implements the **Foundation** (infrastructure, authentication —
 password + OTP login, JWT access/refresh, data-driven RBAC — and master data: village
-hierarchy, residents, Excel import/export, seeding) and **Sub-project B1 / Phase 4, the
+hierarchy, residents, Excel import/export, seeding), **Sub-project B1 / Phase 4, the
 Letter Template Engine**: dynamic letter templates + fields, sandboxed Jinja2/xhtml2pdf
-preview rendering, and the 11 letter types seeded from the frontend's mock data.
+preview rendering, and the 11 letter types seeded from the frontend's mock data, and
+**Sub-project B2 / Phase 5-7**: citizen letter submissions, a village-configurable
+approval chain, and automatic PDF issuance with numbering, a visual signature, and a
+public no-auth QR-verification endpoint.
 
 ## Overview
 
@@ -77,8 +80,10 @@ alembic upgrade head
 ## Seeding
 
 Seed roles, permissions, the 5 demo accounts, Desa Kopo's master data (village, 4 dusun,
-RW/RT, 36 residents), and the 11 letter templates (with their dynamic fields) from
-`app/seed/data.py` and `app/seed/letter_template_data.py`:
+RW/RT, 36 residents), the 11 letter templates (with their dynamic fields), the demo
+`warga` account's link to its matching Resident row, and the default 3-step approval
+chain (staf → sekretaris → kades), from `app/seed/data.py` and
+`app/seed/letter_template_data.py`:
 
 ```bash
 python -m app.seed
@@ -86,8 +91,11 @@ python -m app.seed
 
 Prints `Seeding complete.` on success. The seeder is **idempotent** — re-running it
 will not create duplicate rows (it looks up existing roles/permissions/village/dusun
-by name, existing residents by NIK, and existing letter templates by code before
-inserting). A fresh run creates 11 `letter_templates` rows and 32 `template_fields` rows.
+by name, existing residents by NIK, existing letter templates by code, an existing
+`resident_id` link on the `warga` user, and any existing `ApprovalStepConfig` rows for
+the village before inserting). A fresh run creates 11 `letter_templates` rows, 32
+`template_fields` rows, links `warga.resident_id` to the seeded "Siti Rohmah" resident,
+and creates 3 `approval_step_configs` rows.
 
 ## Running
 
@@ -138,6 +146,12 @@ OTP (`POST /api/v1/auth/request-otp` with the NIK below, then
 - `GET/POST/PUT/DELETE /api/v1/residents` (with `?search=&rt_id=&family_card_id=`)
 - `POST /api/v1/residents/import`, `GET /api/v1/residents/export` (xlsx)
 - `GET/POST/PUT/DELETE /api/v1/templates`, letter template CRUD (see Letter Templates below)
+- `POST/GET /api/v1/submissions`, `GET /api/v1/submissions/{id}`,
+  `POST /api/v1/submissions/{id}/attachments`, `POST /api/v1/submissions/{id}/approve`,
+  `POST /api/v1/submissions/{id}/reject`, `GET /api/v1/submissions/{id}/history`,
+  `GET /api/v1/submissions/{id}/pdf` (see Pengajuan, Approval & Penerbitan Surat below)
+- `GET/PUT /api/v1/approval-steps` — village approval-chain configuration
+- `GET /api/v1/public/verify/{code}` — no-auth public letter verification
 - `GET /api/v1/health`, `GET /api/v1/health/ready`
 
 ## Letter Templates
@@ -172,16 +186,68 @@ the official wording used by Desa Kopo** — it is meant as a working starting p
 is fully editable via `PUT /templates/{id}` once the real text is supplied.
 
 Numbering (`numbering_prefix` + `numbering_pattern`, e.g.
-`{prefix}/{seq}/Ds.Kopo/{year}`) is a **format definition only** in this phase — there
-is no counter/allocation logic yet; that lands with B2's letter issuance (Fase 5-7).
+`{prefix}/{seq}/Ds.Kopo/{year}`) was a **format definition only** as of B1; the actual
+per-template, per-year counter and atomic allocation logic is implemented in B2's
+letter issuance — see Pengajuan, Approval & Penerbitan Surat below.
+
+## Pengajuan, Approval & Penerbitan Surat
+
+Sub-project B2 (Fase 5-7) adds the full lifecycle from citizen request to issued,
+verifiable letter, all reusing B1's template engine and hardened PDF pipeline — no
+per-letter-type models or code paths.
+
+Endpoints (all under `/api/v1`, guarded by `submission:*`/`approval_config:manage`
+permissions):
+
+- `POST /submissions` — a citizen (`warga`) creates a request against a `LetterTemplate`,
+  with answers validated against that template's dynamic field definitions
+- `GET /submissions` (paginated) — `submission:read` returns only the caller's own
+  requests; `submission:read_all` (staf/sekretaris/kades/administrator) returns the
+  village's requests. This distinction is why `submission:read_all` exists as a
+  separate permission code rather than branching on role name.
+- `GET /submissions/{id}` — single request, scoped the same way
+- `POST /submissions/{id}/attachments` — upload a supporting document (size/mime
+  validated, renamed to a UUID filename)
+- `POST /submissions/{id}/approve`, `POST /submissions/{id}/reject` — advance or
+  terminate the request. **Reject is terminal** — there is no edit/resubmit path.
+  Approval turn-taking is enforced entirely by data: the acting user's `role_id` must
+  match the current `ApprovalStepConfig.role_id` for that village and step index —
+  never a hardcoded `if role == "..."` check. The final approval step automatically
+  issues the letter: allocates a real sequential number via `LetterNumberCounter`,
+  renders the final PDF (through the same hardened `TemplateRenderService`/xhtml2pdf
+  pipeline B1's preview uses), and generates a verification code + QR image embedded in
+  the PDF.
+- `GET /submissions/{id}/history` — full status-change audit trail
+- `GET /submissions/{id}/pdf` — download the issued PDF (raw bytes response, same
+  pattern as B1's `/templates/{id}/preview`)
+- `GET/PUT /approval-steps` — `approval_config:manage`-guarded; defines/replaces a
+  village's ordered approval chain (default seeded as staf → sekretaris → kades,
+  matching mockData's `SETTINGS.approvalMode='3'`). Replacing a chain while a
+  submission is mid-flight is blocked with `409` to avoid orphaning an in-progress
+  approval.
+- `GET /public/verify/{code}` — **no authentication required**; resolves a letter's
+  verification code (the same one encoded in its QR) to its public issuance details.
+  Unknown codes return a uniform 404, revealing nothing about whether a code was ever
+  valid.
+
+**Storage:** uploaded attachments and generated PDFs are written to local disk under
+`storage/` via `FileStorageService`, a small abstraction chosen so a future move to
+Cloudflare R2 (or any object store) needs no call-site changes — it is not wired to any
+remote store yet, per CLAUDE.md's "Object Storage ready" guidance.
+
+**Notifications:** `notify_status_change()` is currently a stub that only logs the
+event (submission created/approved/rejected/issued). Real dispatch (WhatsApp/email via
+ARQ background workers) is a Phase 8 (Sub-project C) integration point, not built here.
 
 ## Roadmap: sub-projects B2/C/D
 
-Phase 4 (Letter Template Engine — this repository's current state) is **done**: template
-+ field CRUD, PDF preview, numbering format definition, and the 11 seeded letter types.
+Phase 4-7 (Letter Template Engine, B1, plus Pengajuan/Approval/Penerbitan, B2 — this
+repository's current state) are **done**: template + field CRUD, PDF preview, the 11
+seeded letter types, citizen submissions, a configurable data-driven approval chain,
+automatic numbered PDF issuance with visual signature + QR, and public no-auth
+verification.
 
-Next up is **Sub-project B2 (Fase 5-7)**: Pengajuan (citizen letter requests against
-these templates), configurable Approval workflows, and PDF issuance (numbered, signed
-letters generated from an approved pengajuan). Notifications (email/WhatsApp via ARQ
-workers) and reporting remain planned as further follow-on sub-projects and are
-intentionally out of scope here.
+Next up is **Sub-project C (Fase 8-11)**: Notifikasi (real WhatsApp/email dispatch via
+the ARQ workers the notification stub is designed to plug into), Dashboard, Portal
+Desa, and Pengaduan (public complaint/report intake). These remain intentionally out of
+scope here.
