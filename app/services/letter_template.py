@@ -1,10 +1,13 @@
 """Letter template service: template CRUD, field CRUD, and reordering."""
+from __future__ import annotations
+
 import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.models.letter_template import LetterTemplate, TemplateField
 from app.repositories.base import BaseRepository
@@ -58,3 +61,73 @@ class LetterTemplateService:
         await self.repo.soft_delete(obj)
         await self.session.commit()
         logger.info("LetterTemplate deleted id=%s", id_)
+
+    async def list_fields(self, template_id: uuid.UUID) -> list[TemplateField]:
+        """Return all non-deleted fields of a template, ordered by order_index."""
+        await self.get_or_404(template_id)
+        stmt = (
+            select(TemplateField)
+            .where(TemplateField.template_id == template_id, TemplateField.deleted_at.is_(None))
+            .order_by(TemplateField.order_index)
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def add_field(self, template_id: uuid.UUID, data: dict[str, Any]) -> TemplateField:
+        """Add a new field to a template, appended at the end of the order."""
+        await self.get_or_404(template_id)
+        existing = await self.list_fields(template_id)
+        next_order = max((f.order_index for f in existing), default=-1) + 1
+        obj = await self.field_repo.create(template_id=template_id, order_index=next_order, **data)
+        await self.session.commit()
+        logger.info("TemplateField created id=%s template_id=%s", obj.id, template_id)
+        return obj
+
+    async def get_field_or_404(self, template_id: uuid.UUID, field_id: uuid.UUID) -> TemplateField:
+        """Return a field scoped to its template, or raise NotFoundError."""
+        obj = await self.field_repo.get(field_id)
+        if obj is None or obj.template_id != template_id:
+            raise NotFoundError("Field template tidak ditemukan")
+        return obj
+
+    async def update_field(
+        self, template_id: uuid.UUID, field_id: uuid.UUID, data: dict[str, Any]
+    ) -> TemplateField:
+        """Update a single field's metadata."""
+        obj = await self.get_field_or_404(template_id, field_id)
+        obj = await self.field_repo.update(obj, **data)
+        await self.session.commit()
+        logger.info("TemplateField updated id=%s", field_id)
+        return obj
+
+    async def delete_field(self, template_id: uuid.UUID, field_id: uuid.UUID) -> None:
+        """Soft-delete a single field."""
+        obj = await self.get_field_or_404(template_id, field_id)
+        await self.field_repo.soft_delete(obj)
+        await self.session.commit()
+        logger.info("TemplateField deleted id=%s", field_id)
+
+    async def reorder_fields(
+        self, template_id: uuid.UUID, field_ids: list[uuid.UUID]
+    ) -> list[TemplateField]:
+        """Rewrite order_index for all of a template's fields from a full ordered id list.
+
+        ``field_ids`` must exactly match the set of the template's current
+        non-deleted field ids (no missing, no extra, no duplicates) — this
+        keeps ordering consistent without a DB-level unique constraint on
+        order_index, which would risk transient collisions when two fields
+        swap positions within the same transaction.
+        """
+        await self.get_or_404(template_id)
+        existing = await self.list_fields(template_id)
+        existing_ids = {f.id for f in existing}
+        given_ids = set(field_ids)
+        if given_ids != existing_ids or len(field_ids) != len(existing_ids):
+            raise ValidationAppError(
+                "Daftar field harus memuat seluruh field template ini tanpa duplikat"
+            )
+        by_id = {f.id: f for f in existing}
+        for index, fid in enumerate(field_ids):
+            by_id[fid].order_index = index
+        await self.session.commit()
+        logger.info("TemplateField reordered template_id=%s", template_id)
+        return await self.list_fields(template_id)
