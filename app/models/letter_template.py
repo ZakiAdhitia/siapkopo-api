@@ -55,7 +55,12 @@ class TemplateField(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     order_index: Mapped[int] = mapped_column(default=0)
     field_key: Mapped[str] = mapped_column(String(50))
     label: Mapped[str] = mapped_column(String(150))
-    field_type: Mapped[FieldType] = mapped_column(SAEnum(FieldType, native_enum=False, length=20))
+    field_type: Mapped[FieldType] = mapped_column(
+        SAEnum(
+            FieldType, native_enum=False, length=20,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        )
+    )
     options: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     placeholder: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_required: Mapped[bool] = mapped_column(default=True)
