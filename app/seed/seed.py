@@ -78,21 +78,27 @@ async def seed_rbac(session: AsyncSession) -> None:
         role.permissions = [existing_perms[c] for c in ROLE_PERMISSIONS[name]]
     await session.flush()
 
-    # Demo users
+    # Demo users: create or update with latest role/position/email from DEMO_ACCOUNTS
     existing_users = {u.username: u for u in (await session.scalars(select(User))).all()}
     existing_positions = {p.slug: p for p in (await session.scalars(select(Position))).all()}
     for acc in DEMO_ACCOUNTS:
-        if acc["username"] in existing_users:
-            continue
         position_id = (
             existing_positions[acc["position"]].id if acc["position"] else None
         )
-        session.add(User(
-            username=acc["username"], nik=acc["nik"], full_name=acc["full_name"],
-            hashed_password=hash_password(acc["password"]), email=acc["email"],
-            role_id=existing_roles[acc["role"]].id, position_id=position_id,
-            is_active=True,
-        ))
+        user = existing_users.get(acc["username"])
+        if user is None:
+            # Create new user
+            session.add(User(
+                username=acc["username"], nik=acc["nik"], full_name=acc["full_name"],
+                hashed_password=hash_password(acc["password"]), email=acc["email"],
+                role_id=existing_roles[acc["role"]].id, position_id=position_id,
+                is_active=True,
+            ))
+        else:
+            # Update existing user with new role/position/email
+            user.role_id = existing_roles[acc["role"]].id
+            user.position_id = position_id
+            user.email = acc["email"]
     await session.commit()
     logger.info("seed_rbac complete: %d permissions, %d roles, %d demo users",
                 len(existing_perms), len(existing_roles), len(DEMO_ACCOUNTS))

@@ -131,13 +131,16 @@ Created by `python -m app.seed`. Use these against `POST /api/v1/auth/login`
 OTP (`POST /api/v1/auth/request-otp` with the NIK below, then
 `POST /api/v1/auth/verify-otp`).
 
-| Username   | Password       | Role                  | Notes                          |
-|------------|----------------|------------------------|---------------------------------|
-| `warga`    | `warga123`     | Warga                  | NIK `3516064588020003`, OTP login |
-| `staf`     | `staf123`      | Staf Loket             | password login |
-| `sekdes`   | `sekdes123`    | Sekretaris Desa        | password login |
-| `kades`    | `kades123`     | Kepala Desa            | password login |
-| `operator` | `operator123`  | Admin / Operator (`*`) | password login, full permissions |
+| Username    | Password        | Role              | Position          | Notes |
+|-------------|------------------|-------------------|--------------------|-------|
+| `warga`     | `warga123`      | Warga             | Warga Desa         | NIK `3516064588020003` |
+| `staf`      | `staf123`       | Staff             | Staff Desa         | password login |
+| `bendahara` | `bendahara123`  | Staff             | Bendahara Desa     | password login |
+| `sekdes`    | `sekdes123`     | Admin             | Sekretaris Desa    | password login, final approval |
+| `kades`     | `kades123`      | Admin             | Kepala Desa        | password login, final approval |
+| `operator`  | `operator123`   | Administrator IT  | — | password login, full permissions |
+| `rt001`     | `rt123`         | Warga             | RT                 | password login, linked to an RT |
+| `rw001`     | `rw123`         | Warga             | RW                 | password login, linked to an RW |
 
 ## API surface (current)
 
