@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from app.core.exceptions import NotFoundError, ValidationAppError
+from app.core.exceptions import ValidationAppError
 from app.models.auth import Role, User
 from app.services.letter_template import LetterTemplateService
 from app.services.master import VillageService
