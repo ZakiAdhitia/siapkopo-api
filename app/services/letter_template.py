@@ -92,8 +92,15 @@ class LetterTemplateService:
     async def update_field(
         self, template_id: uuid.UUID, field_id: uuid.UUID, data: dict[str, Any]
     ) -> TemplateField:
-        """Update a single field's metadata."""
+        """Update a single field's metadata.
+
+        ``field_key`` is never written here even if present in ``data`` — it
+        is immutable after creation (referenced by future submission data and
+        by PDF placeholders). The API schema already omits it; this is a
+        service-layer backstop for any other caller.
+        """
         obj = await self.get_field_or_404(template_id, field_id)
+        data = {k: v for k, v in data.items() if k != "field_key"}
         obj = await self.field_repo.update(obj, **data)
         await self.session.commit()
         logger.info("TemplateField updated id=%s", field_id)
