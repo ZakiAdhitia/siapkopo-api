@@ -131,6 +131,18 @@ class SubmissionService:
             raise NotFoundError("Pengajuan tidak ditemukan")
         return obj
 
+    async def get_scoped(
+        self, id_: uuid.UUID, actor_user_id: uuid.UUID, actor_permissions: list[str]
+    ) -> Submission:
+        """Return a submission the actor is allowed to view: their own submission,
+        or any submission if they hold submission:read_all or "*".
+        """
+        obj = await self.get_or_404(id_)
+        can_read_all = "*" in actor_permissions or "submission:read_all" in actor_permissions
+        if not can_read_all and obj.submitted_by_user_id != actor_user_id:
+            raise ForbiddenError("Anda tidak berhak mengakses pengajuan ini")
+        return obj
+
     async def list(
         self, actor_permissions: list[str], actor_user_id: uuid.UUID,
         page: int = 1, size: int = 20,
@@ -142,10 +154,15 @@ class SubmissionService:
 
     async def add_attachment(
         self, submission_id: uuid.UUID, document_label: str, filename: str,
-        content: bytes, content_type: str,
+        content: bytes, content_type: str, actor_user_id: uuid.UUID,
     ) -> SubmissionAttachment:
-        """Validate and store an uploaded attachment for a submission."""
+        """Validate and store an uploaded attachment for a submission.
+
+        Only the submission's own owner may attach documents to it.
+        """
         submission = await self.get_or_404(submission_id)
+        if submission.submitted_by_user_id != actor_user_id:
+            raise ForbiddenError("Anda tidak berhak menambahkan lampiran pada pengajuan ini")
         template = await self.template_repo.get(submission.template_id)
         if template is None or document_label not in template.required_documents:
             raise ValidationAppError(

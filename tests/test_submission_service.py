@@ -100,11 +100,19 @@ async def test_add_attachment_validates_document_label(seeded_session, tmp_path,
     submission = await svc.create(user, template.id, {})
 
     with pytest.raises(ValidationAppError):
-        await svc.add_attachment(submission.id, "Bukan Dokumen Wajib", "x.png", b"abc", "image/png")
+        await svc.add_attachment(
+            submission.id, "Bukan Dokumen Wajib", "x.png", b"abc", "image/png", user.id
+        )
 
-    att = await svc.add_attachment(submission.id, "KTP", "ktp.png", b"abc", "image/png")
+    att = await svc.add_attachment(submission.id, "KTP", "ktp.png", b"abc", "image/png", user.id)
     assert att.document_label == "KTP"
     assert att.original_filename == "ktp.png"
+
+    other_user = await _make_warga_user(seeded_session, "warga_att_intruder")
+    with pytest.raises(ForbiddenError):
+        await svc.add_attachment(
+            submission.id, "KTP", "ktp.png", b"abc", "image/png", other_user.id
+        )
 
 
 async def _setup_pending_submission(session):
@@ -182,6 +190,26 @@ async def test_reject_is_terminal(seeded_session):
     assert rejected.rejection_reason == "Berkas tidak lengkap"
     with pytest.raises(ValidationAppError):
         await svc.approve(submission.id, users["staf"], None)
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_rejects_non_owner_without_read_all(seeded_session):
+    svc, submission, users = await _setup_pending_submission(seeded_session)
+    other_warga = await _make_warga_user(seeded_session, "warga_intruder")
+    with pytest.raises(ForbiddenError):
+        await svc.get_scoped(submission.id, other_warga.id, ["submission:read"])
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_allows_owner_and_read_all(seeded_session):
+    svc, submission, users = await _setup_pending_submission(seeded_session)
+    owner_got = await svc.get_scoped(submission.id, users["warga"].id, ["submission:read"])
+    assert owner_got.id == submission.id
+
+    staff_got = await svc.get_scoped(
+        submission.id, users["staf"].id, ["submission:read", "submission:read_all"]
+    )
+    assert staff_got.id == submission.id
 
 
 @pytest.mark.asyncio

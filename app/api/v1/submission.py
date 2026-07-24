@@ -58,10 +58,13 @@ async def list_submissions(
 async def get_submission(
     submission_id: UUID,
     session: AsyncSession = Depends(get_db),
-    _current: CurrentUser = Depends(require_permission("submission:read")),
+    current: CurrentUser = Depends(require_permission("submission:read")),
 ) -> dict:
-    """Get a single submission by id."""
-    obj = await SubmissionService(session).get_or_404(submission_id)
+    """Get a single submission by id: own only, unless the caller has submission:read_all."""
+    from uuid import UUID as _UUID
+    obj = await SubmissionService(session).get_scoped(
+        submission_id, _UUID(current.id), current.permissions
+    )
     return success_response(SubmissionRead.model_validate(obj).model_dump(mode="json"))
 
 
@@ -71,13 +74,14 @@ async def upload_attachment(
     document_label: str = Form(...),
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db),
-    _current: CurrentUser = Depends(require_permission("submission:create")),
+    current: CurrentUser = Depends(require_permission("submission:create")),
 ) -> dict:
     """Upload a supporting document for a submission."""
+    from uuid import UUID as _UUID
     content = await file.read()
     obj = await SubmissionService(session).add_attachment(
         submission_id, document_label, file.filename or "upload",
-        content, file.content_type or "application/octet-stream",
+        content, file.content_type or "application/octet-stream", _UUID(current.id),
     )
     return success_response(
         SubmissionAttachmentRead.model_validate(obj).model_dump(mode="json"), "Lampiran tersimpan"
@@ -114,10 +118,16 @@ async def reject_submission(
 async def get_submission_history(
     submission_id: UUID,
     session: AsyncSession = Depends(get_db),
-    _current: CurrentUser = Depends(require_permission("submission:read")),
+    current: CurrentUser = Depends(require_permission("submission:read")),
 ) -> dict:
-    """Return a submission's status history, oldest first."""
-    history = await SubmissionService(session).list_history(submission_id)
+    """Return a submission's status history, oldest first.
+
+    Own submissions only, unless the caller has submission:read_all.
+    """
+    from uuid import UUID as _UUID
+    service = SubmissionService(session)
+    await service.get_scoped(submission_id, _UUID(current.id), current.permissions)
+    history = await service.list_history(submission_id)
     return success_response(
         [SubmissionStatusHistoryRead.model_validate(h).model_dump(mode="json") for h in history]
     )
