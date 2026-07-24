@@ -47,7 +47,6 @@ class TemplateFieldRead(_Read):
 
 
 class LetterTemplateCreate(BaseModel):
-    village_id: UUID
     code: str
     name: str
     description: str | None = None
@@ -75,7 +74,6 @@ class LetterTemplateUpdate(BaseModel):
 
 
 class LetterTemplateRead(_Read):
-    village_id: UUID
     code: str
     name: str
     description: str | None = None

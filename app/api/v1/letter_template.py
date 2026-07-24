@@ -21,7 +21,7 @@ from app.schemas.letter_template import (
     TemplateFieldUpdate,
 )
 from app.services.letter_template import LetterTemplateService
-from app.services.master import VillageService
+from app.services.master import VillageProfileService
 from app.services.template_render import TemplateRenderService
 
 router = APIRouter(tags=["letter-templates"])
@@ -171,8 +171,8 @@ async def preview_template(
     service = LetterTemplateService(session)
     template = await service.get_or_404(template_id)
     fields = await service.list_fields(template_id)
-    village = await VillageService(session).get_or_404(template.village_id)
-    pdf_bytes = TemplateRenderService().render_preview(template, fields, village)
+    profile = await VillageProfileService(session).get()
+    pdf_bytes = TemplateRenderService().render_preview(template, fields, profile)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

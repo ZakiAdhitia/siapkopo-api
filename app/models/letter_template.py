@@ -24,10 +24,9 @@ class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "letter_templates"
     __table_args__ = (
-        UniqueConstraint("village_id", "code", name="uq_letter_templates_village_code"),
+        UniqueConstraint("code", name="uq_letter_templates_code"),
     )
 
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     code: Mapped[str] = mapped_column(String(50), index=True)
     name: Mapped[str] = mapped_column(String(150))
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)

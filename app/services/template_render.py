@@ -9,7 +9,7 @@ from xhtml2pdf import pisa
 
 from app.core.exceptions import AppException
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import Village
+from app.models.master import VillageProfile
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class TemplateRenderService:
         )
 
     def _render_document(
-        self, *, template: LetterTemplate, village: Village, data: dict,
+        self, *, template: LetterTemplate, profile: VillageProfile, data: dict,
         nomor: str, tanggal: str, signer_name: str, qr_data_uri: str | None = None,
     ) -> bytes:
         """Shared core: interpolate the body, wrap in the letterhead, render to PDF.
@@ -152,9 +152,9 @@ class TemplateRenderService:
 
         letterhead_tpl = self._env.from_string(_LETTERHEAD)
         full_html = letterhead_tpl.render(
-            kabupaten=village.kabupaten or "-",
-            kecamatan=village.kecamatan or "-",
-            village_name=village.name,
+            kabupaten=profile.kabupaten or "-",
+            kecamatan=profile.kecamatan or "-",
+            village_name=profile.name,
             letter_title=template.name.upper(),
             nomor=nomor,
             body=body_html,
@@ -180,18 +180,18 @@ class TemplateRenderService:
         return buffer.getvalue()
 
     def render_preview(
-        self, template: LetterTemplate, fields: list[TemplateField], village: Village
+        self, template: LetterTemplate, fields: list[TemplateField], profile: VillageProfile
     ) -> bytes:
         """Render a PDF preview of a template using auto-generated sample data."""
         return self._render_document(
-            template=template, village=village, data=self._sample_data(fields),
+            template=template, profile=profile, data=self._sample_data(fields),
             nomor=self._preview_number(template),
             tanggal=date.today().strftime("%d %B %Y"),
             signer_name="(Contoh Tanda Tangan)",
         )
 
     def render_issued(
-        self, *, template: LetterTemplate, fields: list[TemplateField], village: Village,
+        self, *, template: LetterTemplate, fields: list[TemplateField], profile: VillageProfile,
         answers: dict, applicant: dict, nomor: str, tanggal: str, signer_name: str,
         qr_data_uri: str,
     ) -> bytes:
@@ -204,6 +204,6 @@ class TemplateRenderService:
         """
         data = {**applicant, **answers}
         return self._render_document(
-            template=template, village=village, data=data, nomor=nomor,
+            template=template, profile=profile, data=data, nomor=nomor,
             tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
         )
