@@ -75,3 +75,32 @@ async def test_create_succeeds_with_valid_answers(seeded_session):
 
     got = await svc.get_or_404(obj.id)
     assert got.answers["keperluan"] == "Bank"
+
+
+@pytest.mark.asyncio
+async def test_add_attachment_validates_document_label(seeded_session, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.file_storage.get_settings",
+        lambda: type("S", (), {
+            "upload_storage_dir": str(tmp_path), "max_upload_size_bytes": 1024 * 1024,
+        })(),
+    )
+    village = await VillageService(seeded_session).create({"name": "Desa Kopo"})
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
+        "pdf_body_template": "<p></p>", "required_documents": ["KTP"],
+    })
+    user = await _make_warga_user(seeded_session, "warga_att")
+
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(user, template.id, {})
+
+    with pytest.raises(ValidationAppError):
+        await svc.add_attachment(submission.id, "Bukan Dokumen Wajib", "x.png", b"abc", "image/png")
+
+    att = await svc.add_attachment(submission.id, "KTP", "ktp.png", b"abc", "image/png")
+    assert att.document_label == "KTP"
+    assert att.original_filename == "ktp.png"

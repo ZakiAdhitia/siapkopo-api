@@ -10,8 +10,15 @@ from app.core.logging import get_logger
 from app.models.auth import User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import FamilyCard, Resident
-from app.models.submission import Submission, SubmissionStatus, SubmissionStatusHistory, HistoryAction
+from app.models.submission import (
+    HistoryAction,
+    Submission,
+    SubmissionAttachment,
+    SubmissionStatus,
+    SubmissionStatusHistory,
+)
 from app.repositories.base import BaseRepository
+from app.services.file_storage import FileStorageService
 from app.services.notification import notify_status_change
 
 logger = get_logger("submission")
@@ -123,3 +130,28 @@ class SubmissionService:
         can_read_all = "*" in actor_permissions or "submission:read_all" in actor_permissions
         filters = {} if can_read_all else {"submitted_by_user_id": actor_user_id}
         return await self.repo.list(page=page, size=size, filters=filters)
+
+    async def add_attachment(
+        self, submission_id: uuid.UUID, document_label: str, filename: str,
+        content: bytes, content_type: str,
+    ) -> SubmissionAttachment:
+        """Validate and store an uploaded attachment for a submission."""
+        submission = await self.get_or_404(submission_id)
+        template = await self.template_repo.get(submission.template_id)
+        if template is None or document_label not in template.required_documents:
+            raise ValidationAppError(
+                f"'{document_label}' bukan lampiran yang diperlukan untuk surat ini"
+            )
+        storage = FileStorageService()
+        storage.validate_upload(content, content_type)
+        storage_path = await storage.save(content, filename, subdir="attachments")
+
+        attachment = SubmissionAttachment(
+            submission_id=submission_id, document_label=document_label,
+            original_filename=filename, stored_filename=storage_path.rsplit("/", 1)[-1],
+            content_type=content_type, size_bytes=len(content), storage_path=storage_path,
+        )
+        self.session.add(attachment)
+        await self.session.commit()
+        logger.info("Attachment added submission_id=%s label=%s", submission_id, document_label)
+        return attachment
