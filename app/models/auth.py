@@ -14,6 +14,13 @@ role_permissions = Table(
     Column("permission_id", GUID(), ForeignKey("permissions.id"), primary_key=True),
 )
 
+position_permissions = Table(
+    "position_permissions",
+    Base.metadata,
+    Column("position_id", GUID(), ForeignKey("positions.id"), primary_key=True),
+    Column("permission_id", GUID(), ForeignKey("permissions.id"), primary_key=True),
+)
+
 
 class Permission(UUIDMixin, TimestampMixin, Base):
     """A single grantable permission code (e.g. ``resident:read``)."""
@@ -32,6 +39,24 @@ class Role(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     permissions: Mapped[list[Permission]] = relationship(
         secondary=role_permissions, lazy="selectin"
+    )
+
+
+class Position(UUIDMixin, TimestampMixin, Base):
+    """A jabatan (position): hierarchy level + optional extra permissions.
+
+    Separate dimension from Role -- a user's effective permissions are the
+    union of their Role's and their Position's permission rows (see
+    ``AuthService.permissions_for``). Fixed reference data, seeded; no CRUD
+    API by design (see the rework spec).
+    """
+
+    __tablename__ = "positions"
+    slug: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    level: Mapped[int] = mapped_column()
+    permissions: Mapped[list[Permission]] = relationship(
+        secondary=position_permissions, lazy="selectin"
     )
 
 
