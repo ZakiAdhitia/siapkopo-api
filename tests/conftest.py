@@ -7,7 +7,7 @@ import app.core.redis as redis_module
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
-from app.seed.seed import seed_rbac
+from app.seed.seed import seed_positions, seed_rbac
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -43,6 +43,7 @@ async def db_session(_engine):
 
 @pytest_asyncio.fixture
 async def seeded_session(db_session):
+    await seed_positions(db_session)
     await seed_rbac(db_session)
     return db_session
 
@@ -60,6 +61,7 @@ async def client(_engine):
     app.dependency_overrides[get_db] = _override_get_db
     # seed once for endpoint tests
     async with maker() as s:
+        await seed_positions(s)
         await seed_rbac(s)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

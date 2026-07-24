@@ -4,17 +4,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.security import hash_password
-from app.models.auth import Permission, Role, User
+from app.models.auth import Permission, Position, Role, User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import RT, RW, Dusun, Resident, Village
 from app.models.submission import ApprovalStepConfig
 from app.permissions.registry import (
-    DEMO_ACCOUNTS, PERMISSIONS, ROLE_DEFS, ROLE_PERMISSIONS,
+    DEMO_ACCOUNTS, PERMISSIONS, POSITION_DEFS, POSITION_PERMISSIONS,
+    ROLE_DEFS, ROLE_PERMISSIONS,
 )
 from app.seed.data import DUSUN, RESIDENTS, VILLAGE
 from app.seed.letter_template_data import SURAT_TEMPLATES
 
 logger = get_logger("seed")
+
+
+async def seed_positions(session: AsyncSession) -> None:
+    """Seed the fixed Position catalog (jabatan + hierarchy level).
+
+    Idempotent: looks up existing positions by slug before inserting, same
+    pattern as seed_rbac's role/permission handling.
+    """
+    all_codes = set(PERMISSIONS) | {
+        code for codes in POSITION_PERMISSIONS.values() for code in codes
+    }
+    existing_perms = {p.code: p for p in (await session.scalars(select(Permission))).all()}
+    for code in all_codes:
+        if code not in existing_perms:
+            p = Permission(code=code)
+            session.add(p)
+            existing_perms[code] = p
+    await session.flush()
+
+    existing_positions = {p.slug: p for p in (await session.scalars(select(Position))).all()}
+    for slug, display_name, level in POSITION_DEFS:
+        position = existing_positions.get(slug)
+        if position is None:
+            position = Position(slug=slug, display_name=display_name, level=level)
+            session.add(position)
+            existing_positions[slug] = position
+        else:
+            position.display_name = display_name
+            position.level = level
+        position.permissions = [existing_perms[c] for c in POSITION_PERMISSIONS[slug]]
+    await session.commit()
+    logger.info("seed_positions complete: %d positions", len(existing_positions))
 
 
 async def seed_rbac(session: AsyncSession) -> None:
@@ -47,13 +80,18 @@ async def seed_rbac(session: AsyncSession) -> None:
 
     # Demo users
     existing_users = {u.username: u for u in (await session.scalars(select(User))).all()}
+    existing_positions = {p.slug: p for p in (await session.scalars(select(Position))).all()}
     for acc in DEMO_ACCOUNTS:
         if acc["username"] in existing_users:
             continue
+        position_id = (
+            existing_positions[acc["position"]].id if acc["position"] else None
+        )
         session.add(User(
             username=acc["username"], nik=acc["nik"], full_name=acc["full_name"],
-            hashed_password=hash_password(acc["password"]),
-            role_id=existing_roles[acc["role"]].id, is_active=True,
+            hashed_password=hash_password(acc["password"]), email=acc["email"],
+            role_id=existing_roles[acc["role"]].id, position_id=position_id,
+            is_active=True,
         ))
     await session.commit()
     logger.info("seed_rbac complete: %d permissions, %d roles, %d demo users",
@@ -184,6 +222,40 @@ async def seed_link_demo_resident(session: AsyncSession) -> None:
     logger.info("seed_link_demo_resident: linked warga user to resident id=%s", resident.id)
 
 
+async def seed_link_demo_rt_rw(session: AsyncSession) -> None:
+    """Link the demo 'rt001'/'rw001' users to their matching RT/RW rows.
+
+    Both demo accounts are seeded (in seed_rbac) before RT/RW master data
+    exists (in seed_master), so their rt_id/rw_id start out null and get
+    patched here, same two-pass pattern as seed_link_demo_resident.
+
+    Matches by resident full_name -> that resident's own RT/RW, same
+    fragility caveat as seed_link_demo_resident: fine for this single-match
+    seed dataset, not a pattern to reuse for non-seed application code.
+    """
+    for acc in DEMO_ACCOUNTS:
+        resident_name = acc.get("link_resident_name")
+        if resident_name is None:
+            continue
+        user = await session.scalar(select(User).where(User.username == acc["username"]))
+        if user is None or (user.rt_id is not None or user.rw_id is not None):
+            continue
+        resident = await session.scalar(
+            select(Resident).where(Resident.full_name == resident_name)
+        )
+        if resident is None or resident.rt_id is None:
+            continue
+        rt = await session.get(RT, resident.rt_id)
+        if rt is None:
+            continue
+        if acc["position"] == "rt":
+            user.rt_id = rt.id
+        elif acc["position"] == "rw":
+            user.rw_id = rt.rw_id
+    await session.commit()
+    logger.info("seed_link_demo_rt_rw complete")
+
+
 async def seed_approval_steps(session: AsyncSession) -> None:
     """Seed the default 3-step approval chain (staf, sekretaris, kades)
     for the seeded village, matching mockData's SETTINGS.approvalMode='3'.
@@ -213,10 +285,12 @@ async def seed_approval_steps(session: AsyncSession) -> None:
 
 
 async def seed_all(session: AsyncSession) -> None:
-    """Run all seeders: RBAC/demo-users, village hierarchy+residents,
-    letter templates, demo-resident link, default approval steps."""
+    """Run all seeders: positions, RBAC/demo-users, village hierarchy+residents,
+    letter templates, demo-resident/RT/RW links, default approval steps."""
+    await seed_positions(session)
     await seed_rbac(session)
     await seed_master(session)
     await seed_letter_templates(session)
     await seed_link_demo_resident(session)
+    await seed_link_demo_rt_rw(session)
     await seed_approval_steps(session)

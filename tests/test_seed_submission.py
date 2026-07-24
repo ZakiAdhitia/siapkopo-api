@@ -6,12 +6,13 @@ from app.models.master import Resident, Village
 from app.models.submission import ApprovalStepConfig
 from app.seed.data import VILLAGE
 from app.seed.seed import (
-    seed_approval_steps, seed_link_demo_resident, seed_master, seed_rbac,
+    seed_approval_steps, seed_link_demo_resident, seed_master, seed_positions, seed_rbac,
 )
 
 
 @pytest.mark.asyncio
 async def test_seed_link_demo_resident_links_matching_person(db_session):
+    await seed_positions(db_session)
     await seed_rbac(db_session)
     await seed_master(db_session)
     await seed_link_demo_resident(db_session)
@@ -29,6 +30,7 @@ async def test_seed_link_demo_resident_links_matching_person(db_session):
 
 @pytest.mark.asyncio
 async def test_seed_approval_steps_default_three_step_chain(db_session):
+    await seed_positions(db_session)
     await seed_rbac(db_session)
     await seed_master(db_session)
     await seed_approval_steps(db_session)
