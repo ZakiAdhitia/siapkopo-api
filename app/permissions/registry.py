@@ -6,17 +6,18 @@ PERMISSIONS: list[str] = [
     "resident:create", "resident:read", "resident:update", "resident:delete",
     "resident:import", "resident:export",
     "village:manage", "dusun:manage", "rw:manage", "rt:manage", "family_card:manage",
+    "template:manage", "template:read",
 ]
 
 # Role name -> permission codes. "*" means all permissions.
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "warga": ["auth:me"],
     "staf": ["auth:me", "resident:read", "resident:create", "resident:update",
-             "resident:import", "resident:export"],
+             "resident:import", "resident:export", "template:read"],
     "sekretaris": ["auth:me", "resident:read", "resident:update",
                    "village:manage", "dusun:manage", "rw:manage", "rt:manage",
-                   "family_card:manage"],
-    "kades": ["auth:me", "resident:read"],
+                   "family_card:manage", "template:read"],
+    "kades": ["auth:me", "resident:read", "template:read"],
     "administrator": ["*"],
 }
 

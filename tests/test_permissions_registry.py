@@ -8,3 +8,10 @@ def test_registry_shapes():
     assert {r[0] for r in ROLE_DEFS} == set(ROLE_PERMISSIONS)
     usernames = {a["username"] for a in DEMO_ACCOUNTS}
     assert {"warga", "staf", "sekdes", "kades", "operator"} == usernames
+
+
+def test_template_permissions_registered():
+    assert "template:manage" in PERMISSIONS
+    assert "template:read" in PERMISSIONS
+    for role in ("staf", "sekretaris", "kades"):
+        assert "template:read" in ROLE_PERMISSIONS[role]
