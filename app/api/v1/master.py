@@ -10,7 +10,7 @@ from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
-from app.schemas.common import Page
+from app.schemas.common import Page, build_page
 from app.schemas.master import (
     DusunCreate,
     DusunRead,
@@ -45,16 +45,6 @@ from app.services.master import (
 router = APIRouter(tags=["master-data"])
 
 
-def _page(items: list, total: int, p: PaginationParams, schema: type) -> dict:
-    """Build a Page-shaped dict from ORM rows for the response envelope."""
-    return {
-        "items": [schema.model_validate(i).model_dump(mode="json") for i in items],
-        "total": total,
-        "page": p.page,
-        "size": p.size,
-    }
-
-
 # ---- Villages ----
 @router.post("/villages", response_model=Envelope[VillageRead])
 async def create_village(
@@ -75,7 +65,7 @@ async def list_villages(
 ) -> dict:
     """List villages, paginated."""
     items, total = await VillageService(session).list(p.page, p.size)
-    return success_response(_page(items, total, p, VillageRead))
+    return success_response(build_page(items, total, p.page, p.size, VillageRead))
 
 
 @router.get("/villages/{item_id}", response_model=Envelope[VillageRead])
@@ -132,7 +122,7 @@ async def list_dusun(
 ) -> dict:
     """List dusun, paginated."""
     items, total = await DusunService(session).list(p.page, p.size)
-    return success_response(_page(items, total, p, DusunRead))
+    return success_response(build_page(items, total, p.page, p.size, DusunRead))
 
 
 @router.get("/dusun/{item_id}", response_model=Envelope[DusunRead])
@@ -189,7 +179,7 @@ async def list_rw(
 ) -> dict:
     """List RW, paginated."""
     items, total = await RWService(session).list(p.page, p.size)
-    return success_response(_page(items, total, p, RWRead))
+    return success_response(build_page(items, total, p.page, p.size, RWRead))
 
 
 @router.get("/rw/{item_id}", response_model=Envelope[RWRead])
@@ -246,7 +236,7 @@ async def list_rt(
 ) -> dict:
     """List RT, paginated."""
     items, total = await RTService(session).list(p.page, p.size)
-    return success_response(_page(items, total, p, RTRead))
+    return success_response(build_page(items, total, p.page, p.size, RTRead))
 
 
 @router.get("/rt/{item_id}", response_model=Envelope[RTRead])
@@ -303,7 +293,7 @@ async def list_family_cards(
 ) -> dict:
     """List family cards, paginated."""
     items, total = await FamilyCardService(session).list(p.page, p.size)
-    return success_response(_page(items, total, p, FamilyCardRead))
+    return success_response(build_page(items, total, p.page, p.size, FamilyCardRead))
 
 
 @router.get("/family-cards/{item_id}", response_model=Envelope[FamilyCardRead])
@@ -366,7 +356,7 @@ async def list_residents(
     items, total = await ResidentService(session).list(
         p.page, p.size, filters=filters, search=search
     )
-    return success_response(_page(items, total, p, ResidentRead))
+    return success_response(build_page(items, total, p.page, p.size, ResidentRead))
 
 
 @router.post("/residents/import", response_model=Envelope[ResidentImportResult])
