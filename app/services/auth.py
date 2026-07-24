@@ -42,13 +42,17 @@ class AuthService:
         self.settings = get_settings()
 
     def permissions_for(self, user: User) -> list[str]:
-        """Resolve effective permission codes for a user from its role.
+        """Resolve effective permission codes for a user: Role ∪ Position.
 
         Purely data-driven from the database: whatever permission rows are
         assigned to the user's role (including a literal ``"*"`` row for
-        wildcard roles) are returned as-is.
+        wildcard roles) and, if set, the user's position, are unioned and
+        returned. Order is not significant; duplicates are removed.
         """
-        return [p.code for p in user.role.permissions]
+        codes = {p.code for p in user.role.permissions}
+        if user.position is not None:
+            codes.update(p.code for p in user.position.permissions)
+        return list(codes)
 
     async def _issue(self, user: User) -> dict:
         """Issue a fresh access/refresh token pair for an authenticated user."""

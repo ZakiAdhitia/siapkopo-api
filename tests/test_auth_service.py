@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.exceptions import UnauthorizedError
-from app.models.auth import Permission, Role
+from app.models.auth import Permission, Position, Role
 from app.seed.seed import seed_rbac
 from app.services.auth import AuthService
 
@@ -61,6 +61,31 @@ async def test_permissions_for_staf_is_concrete_codes(seeded_session):
     perms = svc.permissions_for(user)
     assert "*" not in perms
     assert "resident:read" in perms
+
+
+@pytest.mark.asyncio
+async def test_permissions_for_unions_role_and_position(seeded_session):
+    svc = AuthService(seeded_session)
+    user = await svc.users.get_by_username("rt001")
+    # Position "rt" grants nothing yet in this part of the rework, but the
+    # union must still include the user's Role permissions (warga's set).
+    perms = svc.permissions_for(user)
+    assert "submission:create" in perms
+
+    # Directly attach an extra permission to Position "rt" and confirm the
+    # union picks it up without going through the Role at all.
+    position = await seeded_session.scalar(
+        select(Position).where(Position.slug == "rt")
+    )
+    extra = Permission(code="lapduk:manage_own")
+    seeded_session.add(extra)
+    await seeded_session.flush()
+    position.permissions.append(extra)
+    await seeded_session.commit()
+    await seeded_session.refresh(user)
+    perms_after = svc.permissions_for(user)
+    assert "lapduk:manage_own" in perms_after
+    assert "submission:create" in perms_after  # role grant still present
 
 
 @pytest.mark.asyncio
