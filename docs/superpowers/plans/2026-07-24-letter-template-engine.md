@@ -2,11 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the dynamic letter-template engine — template + field CRUD, PDF preview via WeasyPrint, numbering-format definition, seeded with the 11 letter types from the frontend's `mockData.js` plus generic drafted letter bodies.
+**Goal:** Build the dynamic letter-template engine — template + field CRUD, PDF preview via xhtml2pdf, numbering-format definition, seeded with the 11 letter types from the frontend's `mockData.js` plus generic drafted letter bodies.
 
-**Architecture:** Same Clean Architecture as Foundation: `router → service → repository → model`. `LetterTemplate`/`TemplateField` are new models composed via the existing generic `BaseRepository`; no ORM relationship between them (Phase 3's master-data models set that precedent — services compose via explicit queries instead). PDF rendering is a dedicated `TemplateRenderService` using sandboxed Jinja2 + WeasyPrint, reused later by Sub-project B2 for real letter issuance.
+**Architecture:** Same Clean Architecture as Foundation: `router → service → repository → model`. `LetterTemplate`/`TemplateField` are new models composed via the existing generic `BaseRepository`; no ORM relationship between them (Phase 3's master-data models set that precedent — services compose via explicit queries instead). PDF rendering is a dedicated `TemplateRenderService` using sandboxed Jinja2 + xhtml2pdf, reused later by Sub-project B2 for real letter issuance.
 
-**Tech Stack:** Adds `weasyprint` (PDF rendering) and `jinja2` (sandboxed template interpolation) to the existing FastAPI/SQLAlchemy-async/Alembic/Postgres stack.
+**Tech Stack:** Adds `xhtml2pdf` (PDF rendering) and `jinja2` (sandboxed template interpolation) to the existing FastAPI/SQLAlchemy-async/Alembic/Postgres stack.
+
+> **Deviation note (2026-07-24):** The design spec and CLAUDE.md's tech-stack list both name WeasyPrint for PDF generation. Task 1's smoke test failed on this Windows machine — WeasyPrint requires native GTK3/Pango/cairo runtime libraries (`OSError: cannot load library 'libgobject-2.0-0'`) that aren't installed and have no pip-installable Windows wheel. The user was asked and explicitly chose to switch to **xhtml2pdf** (pure Python, built on `reportlab`, no native dependency) rather than install the GTK3 runtime or defer PDF work. All PDF-related steps below reflect xhtml2pdf, not WeasyPrint. Task 1 has already been executed with this substitution (commit `18e987f` on `feat/letter-templates`) — its steps are left below for reference/audit trail, not for re-execution.
 
 ## Global Constraints
 
@@ -30,7 +32,7 @@
 
 ```
 sipades-kopo-api/
-  pyproject.toml                          # + weasyprint, jinja2
+  pyproject.toml                          # + xhtml2pdf, jinja2
   app/
     models/
       letter_template.py                  # LetterTemplate, TemplateField, FieldType enum
@@ -40,7 +42,7 @@ sipades-kopo-api/
     repositories/                         # (no new file — reuses BaseRepository)
     services/
       letter_template.py                  # LetterTemplateService: template + field CRUD, reorder
-      template_render.py                  # TemplateRenderService: sandboxed Jinja2 + WeasyPrint
+      template_render.py                  # TemplateRenderService: sandboxed Jinja2 + xhtml2pdf
     permissions/
       registry.py                         # + template:manage, template:read
     api/v1/
@@ -62,58 +64,32 @@ sipades-kopo-api/
 
 ---
 
-### Task 1: WeasyPrint + Jinja2 dependencies — isolated smoke test
+### Task 1: PDF + Jinja2 dependencies — isolated smoke test — ✅ ALREADY EXECUTED
 
-This runs FIRST and alone because WeasyPrint has a native-library dependency (Pango/cairo/GTK) that may not be present on this Windows machine. Surfacing that risk now avoids building nine more tasks on a broken assumption.
-
-**Files:**
-- Modify: `pyproject.toml`
-- Test: `tests/test_pdf_smoke.py`
-
-**Interfaces:**
-- Produces: `weasyprint.HTML` and `jinja2.sandbox.SandboxedEnvironment` importable and usable from the venv.
-
-- [ ] **Step 1: Add dependencies to `pyproject.toml`**
-
-In the `[project] dependencies` list, add:
-```toml
-  "weasyprint>=62",
-  "jinja2>=3.1",
-```
-
-- [ ] **Step 2: Install**
-
-```bash
-source .venv/Scripts/activate
-pip install -e ".[dev]"
-```
-
-- [ ] **Step 3: Write the smoke test** `tests/test_pdf_smoke.py`
+This ran FIRST and alone because PDF rendering has a real risk of native-library issues on
+Windows. It surfaced exactly that: **WeasyPrint failed** (`OSError: cannot load library
+'libgobject-2.0-0'` — missing native GTK3/Pango/cairo runtime). The user was asked and chose
+to switch to **xhtml2pdf** (pure Python, built on `reportlab`). This has already been done —
+commit `18e987f` on `feat/letter-templates` — with `pyproject.toml` adding
+`xhtml2pdf>=0.2.16` + `jinja2>=3.1`, and `tests/test_pdf_smoke.py` passing:
 
 ```python
-"""Smoke test: WeasyPrint can render HTML to a valid PDF on this machine."""
-from weasyprint import HTML
+"""Smoke test: xhtml2pdf can render HTML to a valid PDF on this machine."""
+import io
+
+from xhtml2pdf import pisa
 
 
-def test_weasyprint_renders_minimal_pdf():
-    pdf_bytes = HTML(string="<html><body><h1>Halo</h1></body></html>").write_pdf()
-    assert pdf_bytes[:5] == b"%PDF-"
+def test_xhtml2pdf_renders_minimal_pdf():
+    buffer = io.BytesIO()
+    result = pisa.CreatePDF("<html><body><h1>Halo</h1></body></html>", dest=buffer)
+    assert result.err == 0
+    assert buffer.getvalue()[:5] == b"%PDF-"
 ```
 
-- [ ] **Step 4: Run it**
-
-Run: `pytest tests/test_pdf_smoke.py -v`
-
-**Expected: PASS.**
-
-**If it FAILS with an import/library error** (e.g. `OSError: cannot load library 'libgobject-2.0-0'`, `libpango`, `libcairo`, or similar): **STOP. Report status `BLOCKED`**, include the full error text, and do not proceed to later tasks. Do NOT substitute a different PDF library — WeasyPrint is mandated by CLAUDE.md/PRD's tech stack. In the blocked report, note: "WeasyPrint requires native GTK3 runtime libraries (Pango, cairo, gdk-pixbuf, fontconfig) not bundled in its Windows wheel. Remediation: install the GTK3 runtime (https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer) or via MSYS2 (`pacman -S mingw-w64-x86_64-pango`), then restart the terminal so PATH updates take effect, then re-run this task."
-
-- [ ] **Step 5: Commit** (only if Step 4 passed)
-
-```bash
-git add pyproject.toml tests/test_pdf_smoke.py
-git commit -m "chore: add weasyprint + jinja2 dependencies, verify PDF rendering"
-```
+**No action needed for this task.** It is recorded here only so a fresh implementer reading
+this plan understands the dependency is xhtml2pdf, not WeasyPrint, and doesn't re-attempt the
+original (blocked) approach. Proceed directly to Task 2.
 
 ---
 
@@ -797,13 +773,20 @@ Note: `_sample_data` is introduced as a small internal helper in Step 3 below (k
 
 - [ ] **Step 3: Implement `app/services/template_render.py`**
 
+Uses **xhtml2pdf** (not WeasyPrint — see the deviation note at the top of this plan). Its
+`pisa.CreatePDF(html, dest=buffer)` writes into a binary buffer and returns a status object
+with `.err` (0 = success) instead of returning bytes directly, so the render call is wrapped
+accordingly and a render failure is surfaced as an `AppException`, never a raw exception.
+
 ```python
-"""Render letter templates to PDF using sandboxed Jinja2 + WeasyPrint."""
+"""Render letter templates to PDF using sandboxed Jinja2 + xhtml2pdf."""
+import io
 from datetime import date
 
 from jinja2.sandbox import SandboxedEnvironment
-from weasyprint import HTML
+from xhtml2pdf import pisa
 
+from app.core.exceptions import AppException
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import Village
 
@@ -813,9 +796,9 @@ _LETTERHEAD = """<!DOCTYPE html>
 <meta charset="utf-8">
 <style>
   @page { size: A4; margin: 2.5cm 2cm; }
-  body { font-family: "DejaVu Sans", sans-serif; font-size: 12pt; color: #182420; }
-  .kop { text-align: center; border-bottom: 3px double #182420; padding-bottom: 10px; margin-bottom: 20px; }
-  .kop .instansi { font-size: 11pt; font-weight: bold; letter-spacing: .5px; }
+  body { font-family: Helvetica, sans-serif; font-size: 12pt; color: #182420; }
+  .kop { text-align: center; border-bottom: 3px solid #182420; padding-bottom: 10px; margin-bottom: 20px; }
+  .kop .instansi { font-size: 11pt; font-weight: bold; letter-spacing: 1px; }
   .kop .desa { font-size: 13pt; font-weight: bold; }
   .judul { text-align: center; margin: 20px 0; }
   .judul .title { font-size: 13pt; font-weight: bold; text-decoration: underline; }
@@ -828,7 +811,7 @@ _LETTERHEAD = """<!DOCTYPE html>
 </head>
 <body>
   <div class="kop">
-    <div class="instansi">PEMERINTAH KABUPATEN {{ kabupaten }}<br>KECAMATAN {{ kecamatan }}</div>
+    <div class="instansi">PEMERINTAH KABUPATEN {{ kabupaten }}<br/>KECAMATAN {{ kecamatan }}</div>
     <div class="desa">DESA {{ village_name }}</div>
   </div>
   <div class="judul">
@@ -901,7 +884,11 @@ class TemplateRenderService:
             tanggal=date.today().strftime("%d %B %Y"),
             signer_name="(Contoh Tanda Tangan)",
         )
-        return HTML(string=full_html).write_pdf()
+        buffer = io.BytesIO()
+        result = pisa.CreatePDF(full_html, dest=buffer)
+        if result.err:
+            raise AppException("Gagal merender PDF template", "PDF_RENDER_ERROR", 500)
+        return buffer.getvalue()
 ```
 
 - [ ] **Step 4: Run** — `pytest tests/test_template_render.py -v` → PASS
@@ -910,7 +897,7 @@ class TemplateRenderService:
 
 ```bash
 git add app/services/template_render.py tests/test_template_render.py
-git commit -m "feat(templates): TemplateRenderService (sandboxed Jinja2 + WeasyPrint)"
+git commit -m "feat(templates): TemplateRenderService (sandboxed Jinja2 + xhtml2pdf)"
 ```
 
 ---
@@ -1742,7 +1729,7 @@ git commit -m "docs: letter template engine run guide + Phase 4 verification"
 - Model + migration (`LetterTemplate`, `TemplateField`) → Task 3. ✓
 - API (CRUD template + field CRUD/reorder + preview, all with `response_model`) → Tasks 4, 5, 6, 8. ✓
 - Numbering format definition (pattern + prefix, preview-only, no counter) → Task 3 (columns) + Task 7 (`_preview_number`). ✓ No counter/allocation logic anywhere, per spec's explicit exclusion.
-- PDF preview via sandboxed Jinja2 + WeasyPrint, reusable render function → Task 7. ✓
+- PDF preview via sandboxed Jinja2 + xhtml2pdf (substituted for the spec's WeasyPrint after Task 1's Windows GTK-library blocker; user-approved), reusable render function → Task 7. ✓
 - Seeding 11 templates from `mockData.js` with generic redaksi → Task 9. ✓ All 11 codes, names, icons, colors, required_documents, numbering_prefix, and field definitions cross-checked against the `suratTypes`/`NOMOR_PREFIX` transcription done during design.
 - RBAC: `template:manage` (administrator via `*`), `template:read` (staf/sekretaris/kades) → Task 2, enforced in Task 8's router, tested in Task 8's 403 test.
 - DoD: CRUD+pagination/validation/response_model, 11 templates seeded+previewable, RBAC enforced, tests green → Task 10.

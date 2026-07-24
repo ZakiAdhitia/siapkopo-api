@@ -34,9 +34,17 @@ per iterasi (pola yang terbukti berhasil pada Foundation: 21 task/6 bundle).
   menyimpan string berplaceholder (`{prefix}`, `{seq}`, `{year}`); alokasi nomor urut
   sesungguhnya (bertambah tiap surat terbit, reset tahunan) adalah tanggung jawab **B2**
   karena terikat ke peristiwa penerbitan, bukan definisi template.
-- **Preview PDF nyata (bukan cuma HTML)** di-endpoint B1, memakai WeasyPrint (sudah ter-install
-  sejak Foundation). Fungsi render ini didesain untuk dipakai ulang B2 saat generate surat
-  sungguhan atas submission yang disetujui.
+- **Preview PDF nyata (bukan cuma HTML)** di-endpoint B1. Fungsi render ini didesain untuk
+  dipakai ulang B2 saat generate surat sungguhan atas submission yang disetujui.
+  **[Update 2026-07-24 — deviasi dari CLAUDE.md]:** rencana awal memakai WeasyPrint (sesuai
+  tech stack CLAUDE.md/PRD), tetapi saat implementasi WeasyPrint gagal jalan di mesin Windows
+  ini karena butuh runtime native GTK3/Pango/cairo yang tidak terpasang
+  (`OSError: cannot load library 'libgobject-2.0-0'`), dan tidak tersedia wheel Windows yang
+  membundelnya. Pengguna diberi pilihan dan memilih mengganti ke **xhtml2pdf** (murni Python,
+  dibangun di atas `reportlab`, tanpa dependency native) alih-alih menginstal GTK3 runtime.
+  Ini adalah penyimpangan yang disengaja & disetujui dari mandat tech stack CLAUDE.md — dicatat
+  di sini dan di memori proyek agar sub-project B2 (dan siapa pun yang meninjau kode) tahu
+  keputusan ini bukan kelalaian.
 - **11 template di-seed dari `mockData.js`** (`suratTypes`) — field, ikon, warna, syarat
   lampiran, prefix nomor ditranskripsi persis dari frontend; badan surat memakai redaksi
   generik di atas. Melanjutkan pola seeding-dari-mockData yang sudah dipakai di Foundation.
@@ -126,7 +134,8 @@ konsisten dengan pola Foundation.
 3. Bungkus hasil interpolasi dengan kop-surat bersama (nama desa, kecamatan, kabupaten dari
    `Village`, judul surat, blok tanda tangan placeholder — bukan tanda tangan digital
    sungguhan, itu cakupan B2/Fase 7).
-4. Render HTML gabungan ke PDF via WeasyPrint, kembalikan bytes.
+4. Render HTML gabungan ke PDF via **xhtml2pdf** (`pisa.CreatePDF`), kembalikan bytes.
+   (Awalnya WeasyPrint — lihat catatan deviasi di Bagian 1.)
 
 Fungsi ini murni sinkron dari sisi request (tanpa antrian) karena hanya dipanggil manual oleh
 admin saat mendesain template — volume rendah, beda dengan generate PDF surat resmi massal
