@@ -70,6 +70,7 @@ _LETTERHEAD = """<!DOCTYPE html>
   .judul { text-align: center; margin: 20px 0; }
   .judul .title { font-size: 13pt; font-weight: bold; text-decoration: underline; }
   .judul .nomor { font-size: 11pt; margin-top: 4px; }
+  .qr { text-align: center; margin-bottom: 10px; }
   .body { text-align: justify; line-height: 1.6; margin-bottom: 40px; }
   .ttd { text-align: right; margin-top: 40px; }
   .ttd .tempat-tanggal { margin-bottom: 60px; }
@@ -84,6 +85,9 @@ _LETTERHEAD = """<!DOCTYPE html>
   <div class="judul">
     <div class="title">{{ letter_title }}</div>
     <div class="nomor">Nomor: {{ nomor }}</div>
+  </div>
+  <div class="qr">
+    {% if qr_data_uri %}<img src="{{ qr_data_uri }}" width="80" height="80"/>{% endif %}
   </div>
   <div class="body">{{ body|safe }}</div>
   <div class="ttd">
@@ -132,11 +136,17 @@ class TemplateRenderService:
             prefix=template.numbering_prefix, seq=1, year=date.today().year
         )
 
-    def render_preview(
-        self, template: LetterTemplate, fields: list[TemplateField], village: Village
+    def _render_document(
+        self, *, template: LetterTemplate, village: Village, data: dict,
+        nomor: str, tanggal: str, signer_name: str, qr_data_uri: str | None = None,
     ) -> bytes:
-        """Render a PDF preview of a template using auto-generated sample data."""
-        data = self._sample_data(fields)
+        """Shared core: interpolate the body, wrap in the letterhead, render to PDF.
+
+        Both render_preview and render_issued funnel through this single
+        method so the xhtml2pdf security hardening (link_callback blocking
+        external resources + socket timeout) is defined and applied in
+        exactly one place.
+        """
         body_tpl = self._env.from_string(template.pdf_body_template)
         body_html = body_tpl.render(**data)
 
@@ -146,10 +156,11 @@ class TemplateRenderService:
             kecamatan=village.kecamatan or "-",
             village_name=village.name,
             letter_title=template.name.upper(),
-            nomor=self._preview_number(template),
+            nomor=nomor,
             body=body_html,
-            tanggal=date.today().strftime("%d %B %Y"),
-            signer_name="(Contoh Tanda Tangan)",
+            tanggal=tanggal,
+            signer_name=signer_name,
+            qr_data_uri=qr_data_uri or "",
         )
         buffer = io.BytesIO()
         previous_timeout = socket.getdefaulttimeout()
@@ -165,5 +176,34 @@ class TemplateRenderService:
         finally:
             socket.setdefaulttimeout(previous_timeout)
         if result.err:
-            raise AppException("Gagal merender PDF template", "PDF_RENDER_ERROR", 500)
+            raise AppException("Gagal merender PDF surat", "PDF_RENDER_ERROR", 500)
         return buffer.getvalue()
+
+    def render_preview(
+        self, template: LetterTemplate, fields: list[TemplateField], village: Village
+    ) -> bytes:
+        """Render a PDF preview of a template using auto-generated sample data."""
+        return self._render_document(
+            template=template, village=village, data=self._sample_data(fields),
+            nomor=self._preview_number(template),
+            tanggal=date.today().strftime("%d %B %Y"),
+            signer_name="(Contoh Tanda Tangan)",
+        )
+
+    def render_issued(
+        self, *, template: LetterTemplate, fields: list[TemplateField], village: Village,
+        answers: dict, applicant: dict, nomor: str, tanggal: str, signer_name: str,
+        qr_data_uri: str,
+    ) -> bytes:
+        """Render the real issued letter using actual submission answers.
+
+        ``fields`` is accepted (matching render_preview's signature shape)
+        but not used to derive data here -- real answers/applicant data are
+        passed in directly by the caller (SubmissionService), which already
+        validated them against the template's fields at submission time.
+        """
+        data = {**applicant, **answers}
+        return self._render_document(
+            template=template, village=village, data=data, nomor=nomor,
+            tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
+        )

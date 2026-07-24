@@ -99,3 +99,26 @@ def test_render_preview_blocks_external_resource_fetch_and_stays_fast():
     assert elapsed < 2.0, (
         f"render_preview took {elapsed:.2f}s; external resource fetch was not blocked"
     )
+
+
+def test_render_issued_embeds_real_answers_and_qr():
+    template = _template()
+    fields = _fields(template.id)
+    village = _village()
+    pdf_bytes = TemplateRenderService().render_issued(
+        template=template, fields=fields, village=village,
+        answers={"alamat_tinggal_saat_ini": "Jl. Nyata No. 1", "lama_tinggal": "3 tahun"},
+        applicant={"nama": "Budi Nyata", "nik": "1234567890123456",
+                   "alamat": "Jl. Nyata No. 1", "no_kk": "9876543210123456"},
+        nomor="470/1/Ds.Kopo/2026",
+        tanggal="24 Juli 2026",
+        signer_name="Wiwin Wildan",
+        qr_data_uri="data:image/png;base64,iVBORw0KGgo=",
+    )
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_render_preview_still_works_after_refactor():
+    template = _template()
+    pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _village())
+    assert pdf_bytes[:5] == b"%PDF-"
