@@ -1,5 +1,7 @@
 """Render letter templates to PDF using sandboxed Jinja2 + xhtml2pdf."""
 import io
+import logging
+import socket
 from datetime import date
 
 from jinja2.sandbox import SandboxedEnvironment
@@ -8,6 +10,52 @@ from xhtml2pdf import pisa
 from app.core.exceptions import AppException
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import Village
+
+logger = logging.getLogger(__name__)
+
+# 1x1 transparent GIF, used as an inert stand-in for any resource xhtml2pdf
+# is refused permission to resolve. It is a `data:` URI, so resolving it never
+# touches the filesystem or the network.
+_BLOCKED_RESOURCE_PLACEHOLDER = (
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+)
+
+# Defense-in-depth backstop: nothing in a single-page government letter render
+# should legitimately need more than a few seconds. This bounds any blocking
+# I/O xhtml2pdf might still attempt despite the link_callback below.
+_RENDER_SOCKET_TIMEOUT_SECONDS = 5
+
+
+def _block_external_resources(uri: str, _relative: str | None) -> str:
+    """xhtml2pdf `link_callback`: refuse to resolve any external resource.
+
+    The letter engine's HTML (letterhead + admin-authored ``pdf_body_template``)
+    is fully self-contained inline HTML/CSS and never legitimately needs to load
+    an external image, stylesheet, or font, nor read an arbitrary local file.
+    Without this callback, xhtml2pdf performs a REAL outbound fetch (or local
+    file read) for any ``<img src>``, ``<link>``, or CSS ``url()`` it finds --
+    an SSRF/DoS vector that needs no ``{{ }}`` Jinja expression, so it entirely
+    bypasses the sandboxed Jinja2 environment used to render the template.
+
+    Important: returning a falsy value (``None``/``""``) here does NOT block
+    resolution. xhtml2pdf's ``pisaFileObject.__init__`` only overrides the URI
+    when the callback's return value is truthy (see
+    ``xhtml2pdf/files.py``: ``if callback and (new := callback(uri, basepath))``);
+    a falsy return falls through to xhtml2pdf's own default resolution, i.e. it
+    still performs the fetch. So every external reference is instead redirected
+    to an inert local ``data:`` URI, which xhtml2pdf resolves instantly, with no
+    I/O -- the render still succeeds, just without that resource (a blank image
+    in its place), rather than raising and aborting the whole PDF.
+
+    Raising an exception from this callback is NOT an option either: it
+    propagates straight out of ``pisa.CreatePDF`` and aborts the entire render,
+    which is a much heavier failure mode than silently dropping one resource.
+    """
+    if isinstance(uri, str) and uri.startswith("data:"):
+        # Already an inline resource; no I/O involved either way.
+        return uri
+    logger.warning("Blocked external resource resolution in letter template render: %r", uri)
+    return _BLOCKED_RESOURCE_PLACEHOLDER
 
 _LETTERHEAD = """<!DOCTYPE html>
 <html>
@@ -104,7 +152,18 @@ class TemplateRenderService:
             signer_name="(Contoh Tanda Tangan)",
         )
         buffer = io.BytesIO()
-        result = pisa.CreatePDF(full_html, dest=buffer)
+        previous_timeout = socket.getdefaulttimeout()
+        try:
+            # Defense-in-depth: bound any blocking socket call xhtml2pdf might
+            # still make, on top of the link_callback refusing external
+            # resources outright. Restored in `finally` so this never leaks
+            # into unrelated code elsewhere in the process.
+            socket.setdefaulttimeout(_RENDER_SOCKET_TIMEOUT_SECONDS)
+            result = pisa.CreatePDF(
+                full_html, dest=buffer, link_callback=_block_external_resources
+            )
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
         if result.err:
             raise AppException("Gagal merender PDF template", "PDF_RENDER_ERROR", 500)
         return buffer.getvalue()

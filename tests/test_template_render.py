@@ -1,6 +1,7 @@
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import Village
 from app.services.template_render import TemplateRenderService
+import time
 import uuid
 
 
@@ -62,3 +63,39 @@ def test_render_preview_select_field_uses_first_option():
     )
     svc = TemplateRenderService()
     assert svc._sample_data([field])["keperluan"] == "Beasiswa"
+
+
+def test_render_preview_blocks_external_resource_fetch_and_stays_fast():
+    """Regression test for the xhtml2pdf SSRF/DoS finding (B1 review).
+
+    An admin-authored ``pdf_body_template`` containing a plain
+    ``<img src="http://...">`` needs no ``{{ }}`` Jinja expression, so the
+    sandboxed Jinja2 environment does nothing to stop xhtml2pdf from
+    attempting a real outbound network fetch of that URL. The fix blocks all
+    external resource resolution via a `link_callback` (backed by a socket
+    timeout as a defense-in-depth backstop), so this must render QUICKLY --
+    with no real network attempt at all -- rather than merely eventually
+    succeeding after a slow retry/timeout cycle.
+
+    Deliberately uses a non-routable address (RFC 5737 TEST-NET-1) whose
+    non-response would otherwise take tens of seconds (verified during
+    development: ~60s unpatched, due to xhtml2pdf's internal 3-attempt
+    retry loop). The assertion is on wall-clock time well under any real
+    network timeout, so it stays deterministic across environments -- it
+    passes because the fetch is never attempted, not because of any
+    particular network condition.
+    """
+    template = _template()
+    template.pdf_body_template = (
+        '<p>Nama: {{ nama }}</p><img src="http://192.0.2.1/nonexistent">'
+    )
+    svc = TemplateRenderService()
+
+    started = time.monotonic()
+    pdf_bytes = svc.render_preview(template, _fields(template.id), _village())
+    elapsed = time.monotonic() - started
+
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert elapsed < 2.0, (
+        f"render_preview took {elapsed:.2f}s; external resource fetch was not blocked"
+    )
