@@ -2,7 +2,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, String
+from sqlalchemy import Date, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, GUID, SoftDeleteMixin, TimestampMixin, UUIDMixin
@@ -17,6 +17,35 @@ class Village(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     kecamatan: Mapped[str | None] = mapped_column(String(100), nullable=True)
     kabupaten: Mapped[str | None] = mapped_column(String(100), nullable=True)
     provinsi: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class VillageProfile(UUIDMixin, TimestampMixin, Base):
+    """Singleton row describing the (single) village this system serves.
+
+    Replaces the old multi-village ``Village`` model -- multi-desa support
+    was explicitly removed (see the rework spec). Exactly one row is
+    expected to exist; enforced by ``VillageProfileService``, not a DB
+    constraint (sufficient for this application's single-tenant scale).
+    """
+
+    __tablename__ = "village_profile"
+    name: Mapped[str] = mapped_column(String(150))
+    slogan: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    kecamatan: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    kabupaten: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    provinsi: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    kades_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    kades_photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    sambutan_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kontak_alamat: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    kontak_telp: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    kontak_email: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    kontak_jam: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    jumlah_jiwa: Mapped[int | None] = mapped_column(nullable=True)
+    jumlah_kk: Mapped[int | None] = mapped_column(nullable=True)
+    luas_wilayah: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
 class Dusun(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
