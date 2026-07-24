@@ -192,7 +192,7 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
-    async def _resolve_signer_name(self) -> str:
+    async def resolve_signer_name(self) -> str:
         """Return the Kepala Desa's display name for the signature block.
 
         Single-village MVP: looks up the (single) user with role 'kades'.
@@ -233,7 +233,7 @@ class SubmissionService:
 
         base_url = get_settings().public_verify_base_url.rstrip("/")
         qr_data_uri = generate_qr_data_uri(f"{base_url}/{verification_code}")
-        signer_name = await self._resolve_signer_name()
+        signer_name = await self.resolve_signer_name()
         tanggal = datetime.now(timezone.utc).strftime("%d %B %Y")
 
         pdf_bytes = TemplateRenderService().render_issued(
