@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.exceptions import UnauthorizedError
-from app.models.auth import Permission, Position, Role
+from app.models.auth import Permission, Position, Role, User
 from app.seed.seed import seed_rbac
 from app.services.auth import AuthService
 
@@ -100,3 +100,36 @@ async def test_seed_rbac_is_idempotent(seeded_session):
     roles_after = (await seeded_session.scalars(select(Role))).all()
     assert len(perms_after) == len(perms_before)
     assert len(roles_after) == len(roles_before)
+
+
+@pytest.mark.asyncio
+async def test_seed_rbac_corrects_stale_role_on_reseed(seeded_session):
+    """Regression test for the update-on-reseed fix in seed_rbac.
+
+    Simulates a demo username that pre-existed this Role+Position rework
+    and was therefore left with a stale role_id/position_id (the old
+    seed_rbac skipped updating any username already present). Re-running
+    seed_rbac must now correct the user's role_id/position_id back to
+    whatever DEMO_ACCOUNTS specifies, not leave the stale values in place.
+    """
+    user = await seeded_session.scalar(select(User).where(User.username == "staf"))
+    correct_role_id = user.role_id
+    correct_position_id = user.position_id
+
+    # Force the user onto a different role/position than DEMO_ACCOUNTS
+    # specifies for "staf", to simulate the pre-rework stale state.
+    stale_role = await seeded_session.scalar(select(Role).where(Role.name == "admin"))
+    stale_position = await seeded_session.scalar(
+        select(Position).where(Position.slug == "kepala_desa")
+    )
+    assert stale_role.id != correct_role_id
+    assert stale_position.id != correct_position_id
+    user.role_id = stale_role.id
+    user.position_id = stale_position.id
+    await seeded_session.commit()
+
+    await seed_rbac(seeded_session)
+
+    await seeded_session.refresh(user)
+    assert user.role_id == correct_role_id
+    assert user.position_id == correct_position_id

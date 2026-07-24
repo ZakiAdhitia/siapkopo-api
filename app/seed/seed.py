@@ -79,6 +79,19 @@ async def seed_rbac(session: AsyncSession) -> None:
     await session.flush()
 
     # Demo users: create or update with latest role/position/email from DEMO_ACCOUNTS
+    #
+    # NOTE (matches purely by username): this looks up existing users by
+    # `acc["username"]` alone. Today that's safe because there is no
+    # self-registration endpoint -- every user row in the DB was put there
+    # by this seed script or by an admin, so a username collision with
+    # DEMO_ACCOUNTS can only mean "this is the demo account". Once
+    # self-registration exists (a later rework part, not built yet), a real
+    # citizen could register with a username that happens to collide with a
+    # DEMO_ACCOUNTS entry (e.g. "staf", "warga", or an "admin"-ish name),
+    # and re-running this seed would silently overwrite that real user's
+    # role/position/email with demo values. Not exploitable today -- but
+    # this must be revisited when self-registration ships (e.g. scope the
+    # match/seed to a reserved namespace or flag), not forgotten.
     existing_users = {u.username: u for u in (await session.scalars(select(User))).all()}
     existing_positions = {p.slug: p for p in (await session.scalars(select(Position))).all()}
     for acc in DEMO_ACCOUNTS:
@@ -95,7 +108,11 @@ async def seed_rbac(session: AsyncSession) -> None:
                 is_active=True,
             ))
         else:
-            # Update existing user with new role/position/email
+            # Update existing user with new role/position/email. Deliberately
+            # NOT touching hashed_password/nik/full_name here: a re-seed must
+            # never reset a password someone changed, nor rename/reactivate
+            # a user outside the demo-data contract -- only role/position/
+            # email are considered "managed" by DEMO_ACCOUNTS on update.
             user.role_id = existing_roles[acc["role"]].id
             user.position_id = position_id
             user.email = acc["email"]
