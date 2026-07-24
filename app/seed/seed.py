@@ -1,5 +1,5 @@
 """Idempotent database seeding."""
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -7,6 +7,7 @@ from app.core.security import hash_password
 from app.models.auth import Permission, Role, User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import RT, RW, Dusun, Resident, Village
+from app.models.submission import ApprovalStepConfig
 from app.permissions.registry import (
     DEMO_ACCOUNTS, PERMISSIONS, ROLE_DEFS, ROLE_PERMISSIONS,
 )
@@ -158,8 +159,57 @@ async def seed_letter_templates(session: AsyncSession) -> None:
                 created, len(existing))
 
 
+async def seed_link_demo_resident(session: AsyncSession) -> None:
+    """Link the demo 'warga' user to its matching Resident row.
+
+    Both represent Siti Rohmah but currently exist as unlinked rows (see
+    the plan's Task 15 rationale). Idempotent: no-op if already linked or
+    if either side is missing.
+    """
+    user = await session.scalar(select(User).where(User.username == "warga"))
+    if user is None or user.resident_id is not None:
+        return
+    resident = await session.scalar(select(Resident).where(Resident.full_name == "Siti Rohmah"))
+    if resident is None:
+        return
+    user.resident_id = resident.id
+    await session.commit()
+    logger.info("seed_link_demo_resident: linked warga user to resident id=%s", resident.id)
+
+
+async def seed_approval_steps(session: AsyncSession) -> None:
+    """Seed the default 3-step approval chain (staf, sekretaris, kades)
+    for the seeded village, matching mockData's SETTINGS.approvalMode='3'.
+
+    Idempotent: skips if the village already has any configured steps.
+    """
+    village = await session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
+    if village is None:
+        raise RuntimeError("seed_approval_steps requires seed_master to run first")
+
+    existing_count = await session.scalar(
+        select(func.count()).select_from(ApprovalStepConfig).where(
+            ApprovalStepConfig.village_id == village.id
+        )
+    )
+    if existing_count:
+        logger.info("seed_approval_steps: village already configured, skipping")
+        return
+
+    roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
+    for index, role_name in enumerate(("staf", "sekretaris", "kades")):
+        session.add(ApprovalStepConfig(
+            village_id=village.id, order_index=index, role_id=roles[role_name].id
+        ))
+    await session.commit()
+    logger.info("seed_approval_steps: seeded 3-step chain for village_id=%s", village.id)
+
+
 async def seed_all(session: AsyncSession) -> None:
-    """Run all seeders: RBAC/demo-users, village hierarchy+residents, letter templates."""
+    """Run all seeders: RBAC/demo-users, village hierarchy+residents,
+    letter templates, demo-resident link, default approval steps."""
     await seed_rbac(session)
     await seed_master(session)
     await seed_letter_templates(session)
+    await seed_link_demo_resident(session)
+    await seed_approval_steps(session)
