@@ -5,11 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.models.auth import Permission, Role, User
+from app.models.letter_template import FieldType, LetterTemplate, TemplateField
 from app.models.master import RT, RW, Dusun, Resident, Village
 from app.permissions.registry import (
     DEMO_ACCOUNTS, PERMISSIONS, ROLE_DEFS, ROLE_PERMISSIONS,
 )
 from app.seed.data import DUSUN, RESIDENTS, VILLAGE
+from app.seed.letter_template_data import SURAT_TEMPLATES
 
 logger = get_logger("seed")
 
@@ -107,7 +109,57 @@ async def seed_master(session: AsyncSession) -> None:
                 created, len(existing_niks))
 
 
+async def seed_letter_templates(session: AsyncSession) -> None:
+    """Seed the 11 letter templates (with fields) from mockData's suratTypes.
+
+    Idempotent: skips any template whose code already exists for the village.
+    Requires seed_master to have already created the village.
+    """
+    village = await session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
+    if village is None:
+        raise RuntimeError("seed_letter_templates requires seed_master to run first")
+
+    existing = {
+        t.code for t in (await session.scalars(
+            select(LetterTemplate).where(LetterTemplate.village_id == village.id)
+        )).all()
+    }
+    created = 0
+    for entry in SURAT_TEMPLATES:
+        if entry["code"] in existing:
+            continue
+        template = LetterTemplate(
+            village_id=village.id,
+            code=entry["code"],
+            name=entry["name"],
+            description=entry["description"],
+            icon=entry["icon"],
+            color_bg=entry["color_bg"],
+            color_fg=entry["color_fg"],
+            is_active=True,
+            required_documents=entry["required_documents"],
+            numbering_prefix=entry["numbering_prefix"],
+            numbering_pattern="{prefix}/{seq}/Ds.Kopo/{year}",
+            pdf_body_template=entry["pdf_body_template"],
+        )
+        session.add(template)
+        await session.flush()
+        for order_index, (key, label, ftype, options, placeholder, required, rules) in enumerate(
+            entry["fields"]
+        ):
+            session.add(TemplateField(
+                template_id=template.id, order_index=order_index, field_key=key,
+                label=label, field_type=FieldType(ftype), options=options,
+                placeholder=placeholder, is_required=required, validation_rules=rules,
+            ))
+        created += 1
+    await session.commit()
+    logger.info("seed_letter_templates complete: %d templates created (%d already present)",
+                created, len(existing))
+
+
 async def seed_all(session: AsyncSession) -> None:
-    """Run all seeders: RBAC/demo-users, then village hierarchy + residents."""
+    """Run all seeders: RBAC/demo-users, village hierarchy+residents, letter templates."""
     await seed_rbac(session)
     await seed_master(session)
+    await seed_letter_templates(session)
