@@ -220,9 +220,11 @@ permissions):
 - `GET /submissions/{id}/history` — full status-change audit trail
 - `GET /submissions/{id}/pdf` — download the issued PDF (raw bytes response, same
   pattern as B1's `/templates/{id}/preview`)
-- `GET/PUT /approval-steps` — `approval_config:manage`-guarded; defines/replaces a
-  village's ordered approval chain (default seeded as staf → sekretaris → kades,
-  matching mockData's `SETTINGS.approvalMode='3'`). Replacing a chain while a
+- `GET/PUT /approval-steps` — `GET` is `template:read`-guarded (staff tiers can view the
+  chain); `PUT` is `approval_config:manage`-guarded (administrator only) and
+  defines/replaces a village's ordered approval chain (default seeded as
+  staf → sekretaris → kades, matching mockData's `SETTINGS.approvalMode='3'`). Replacing
+  a chain while a
   submission is mid-flight is blocked with `409` to avoid orphaning an in-progress
   approval.
 - `GET /public/verify/{code}` — **no authentication required**; resolves a letter's

@@ -165,6 +165,13 @@ async def seed_link_demo_resident(session: AsyncSession) -> None:
     Both represent Siti Rohmah but currently exist as unlinked rows (see
     the plan's Task 15 rationale). Idempotent: no-op if already linked or
     if either side is missing.
+
+    Matches by full_name, not NIK/ID — fine for this MVP seed dataset,
+    which has exactly one "Siti Rohmah". If the dataset ever grows to
+    include a second resident with the same name, this would silently
+    link to whichever one the DB happens to return first (session.scalar
+    does not raise on multiple matches). Not a concern for seed data, but
+    do not reuse this name-matching pattern for non-seed application code.
     """
     user = await session.scalar(select(User).where(User.username == "warga"))
     if user is None or user.resident_id is not None:
