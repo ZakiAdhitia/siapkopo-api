@@ -69,12 +69,20 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     full_name: Mapped[str] = mapped_column(String(150))
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"))
     resident_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("residents.id"), nullable=True
     )
+    position_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("positions.id"), nullable=True
+    )
+    rt_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("rt.id"), nullable=True)
+    rw_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("rw.id"), nullable=True)
+    pending_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     role: Mapped[Role] = relationship(lazy="selectin")
+    position: Mapped[Position | None] = relationship(lazy="selectin")
 
 
 class RefreshToken(UUIDMixin, TimestampMixin, Base):
