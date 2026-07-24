@@ -2,12 +2,12 @@
 import uuid
 from typing import Any, ClassVar
 
-from sqlalchemy import Column
+from sqlalchemy import Column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
-from app.models.master import RT, RW, Dusun, FamilyCard, Resident, Village
+from app.models.master import RT, RW, Dusun, FamilyCard, Resident, VillageProfile
 from app.repositories.base import BaseRepository
 
 logger = get_logger("master")
@@ -71,11 +71,32 @@ class _CrudService:
         logger.info("%s deleted id=%s", self.name, id_)
 
 
-class VillageService(_CrudService):
-    """CRUD service for Village."""
+class VillageProfileService:
+    """Singleton accessor for the village's descriptive profile.
 
-    model = Village
-    name = "Village"
+    Exactly one VillageProfile row is expected to exist (seeded). No
+    create/delete/list by design -- see the rework spec.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.repo = BaseRepository(session, VillageProfile)
+
+    async def get(self) -> VillageProfile:
+        """Return the singleton profile row."""
+        stmt = select(VillageProfile).limit(1)
+        obj = await self.session.scalar(stmt)
+        if obj is None:
+            raise NotFoundError("Profil desa belum tersedia")
+        return obj
+
+    async def update(self, data: dict[str, Any]) -> VillageProfile:
+        """Update the singleton profile row."""
+        obj = await self.get()
+        obj = await self.repo.update(obj, **data)
+        await self.session.commit()
+        logger.info("VillageProfile updated id=%s", obj.id)
+        return obj
 
 
 class DusunService(_CrudService):

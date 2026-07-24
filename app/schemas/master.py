@@ -12,28 +12,44 @@ class _Read(BaseModel):
     id: UUID
 
 
-class VillageCreate(BaseModel):
-    name: str
-    slogan: str | None = None
-    kecamatan: str | None = None
-    kabupaten: str | None = None
-    provinsi: str | None = None
-
-
-class VillageUpdate(BaseModel):
+class VillageProfileUpdate(BaseModel):
     name: str | None = None
     slogan: str | None = None
     kecamatan: str | None = None
     kabupaten: str | None = None
     provinsi: str | None = None
+    description: str | None = None
+    photo_path: str | None = None
+    kades_name: str | None = None
+    kades_photo_path: str | None = None
+    sambutan_text: str | None = None
+    kontak_alamat: str | None = None
+    kontak_telp: str | None = None
+    kontak_email: str | None = None
+    kontak_jam: str | None = None
+    jumlah_jiwa: int | None = None
+    jumlah_kk: int | None = None
+    luas_wilayah: str | None = None
 
 
-class VillageRead(_Read):
+class VillageProfileRead(_Read):
     name: str
     slogan: str | None = None
     kecamatan: str | None = None
     kabupaten: str | None = None
     provinsi: str | None = None
+    description: str | None = None
+    photo_path: str | None = None
+    kades_name: str | None = None
+    kades_photo_path: str | None = None
+    sambutan_text: str | None = None
+    kontak_alamat: str | None = None
+    kontak_telp: str | None = None
+    kontak_email: str | None = None
+    kontak_jam: str | None = None
+    jumlah_jiwa: int | None = None
+    jumlah_kk: int | None = None
+    luas_wilayah: str | None = None
 
 
 class DusunCreate(BaseModel):

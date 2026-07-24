@@ -28,9 +28,8 @@ from app.schemas.master import (
     ResidentImportResult,
     ResidentRead,
     ResidentUpdate,
-    VillageCreate,
-    VillageRead,
-    VillageUpdate,
+    VillageProfileRead,
+    VillageProfileUpdate,
 )
 from app.services.excel import ResidentExcelService
 from app.services.master import (
@@ -39,67 +38,32 @@ from app.services.master import (
     RTService,
     RWService,
     ResidentService,
-    VillageService,
+    VillageProfileService,
 )
 
 router = APIRouter(tags=["master-data"])
 
 
-# ---- Villages ----
-@router.post("/villages", response_model=Envelope[VillageRead])
-async def create_village(
-    body: VillageCreate,
+# ---- Village Profile (singleton) ----
+@router.get("/village-profile", response_model=Envelope[VillageProfileRead])
+async def get_village_profile(
+    session: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("auth:me")),
+) -> dict:
+    """Get the village's profile. Any authenticated user may read it."""
+    obj = await VillageProfileService(session).get()
+    return success_response(VillageProfileRead.model_validate(obj).model_dump(mode="json"))
+
+
+@router.put("/village-profile", response_model=Envelope[VillageProfileRead])
+async def update_village_profile(
+    body: VillageProfileUpdate,
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("village:manage")),
 ) -> dict:
-    """Create a new village."""
-    obj = await VillageService(session).create(body.model_dump(exclude_unset=True))
-    return success_response(VillageRead.model_validate(obj).model_dump(mode="json"), "Tersimpan")
-
-
-@router.get("/villages", response_model=Envelope[Page[VillageRead]])
-async def list_villages(
-    session: AsyncSession = Depends(get_db),
-    p: PaginationParams = Depends(pagination_params),
-    _=Depends(require_permission("village:manage")),
-) -> dict:
-    """List villages, paginated."""
-    items, total = await VillageService(session).list(p.page, p.size)
-    return success_response(build_page(items, total, p.page, p.size, VillageRead))
-
-
-@router.get("/villages/{item_id}", response_model=Envelope[VillageRead])
-async def get_village(
-    item_id: UUID,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("village:manage")),
-) -> dict:
-    """Get a single village by id."""
-    obj = await VillageService(session).get_or_404(item_id)
-    return success_response(VillageRead.model_validate(obj).model_dump(mode="json"))
-
-
-@router.put("/villages/{item_id}", response_model=Envelope[VillageRead])
-async def update_village(
-    item_id: UUID,
-    body: VillageUpdate,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("village:manage")),
-) -> dict:
-    """Update a village."""
-    obj = await VillageService(session).update(item_id, body.model_dump(exclude_unset=True))
-    return success_response(VillageRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
-
-
-@router.delete("/villages/{item_id}", response_model=Envelope[None])
-async def delete_village(
-    item_id: UUID,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("village:manage")),
-) -> dict:
-    """Soft-delete a village."""
-    await VillageService(session).delete(item_id)
-    return success_response(None, "Dihapus")
+    """Update the village's profile."""
+    obj = await VillageProfileService(session).update(body.model_dump(exclude_unset=True))
+    return success_response(VillageProfileRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
 
 
 # ---- Dusun ----
