@@ -1,15 +1,20 @@
 """Submission service: creation with answer validation against TemplateField."""
+from __future__ import annotations
+
+import secrets
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError, ValidationAppError
+from app.core.config import get_settings
+from app.core.exceptions import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.models.auth import User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import FamilyCard, Resident
+from app.models.master import FamilyCard, Resident, Village
 from app.models.submission import (
     HistoryAction,
     Submission,
@@ -18,16 +23,20 @@ from app.models.submission import (
     SubmissionStatusHistory,
 )
 from app.repositories.base import BaseRepository
+from app.services.approval_config import ApprovalStepConfigService
 from app.services.file_storage import FileStorageService
+from app.services.letter_number import LetterNumberService
 from app.services.notification import notify_status_change
+from app.services.qr import generate_qr_data_uri
+from app.services.template_render import TemplateRenderService
 
 logger = get_logger("submission")
 
 
 class SubmissionService:
-    """Business logic for the submission lifecycle: creation and querying.
-
-    Approval/reject/issuance are added to this same class in Task 12.
+    """Business logic for the submission lifecycle: creation, querying,
+    approval/reject with data-driven turn enforcement, and automatic PDF
+    issuance on the final approval step.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -155,3 +164,145 @@ class SubmissionService:
         await self.session.commit()
         logger.info("Attachment added submission_id=%s label=%s", submission_id, document_label)
         return attachment
+
+    async def list_history(self, submission_id: uuid.UUID) -> list[SubmissionStatusHistory]:
+        """Return a submission's status history, oldest first."""
+        await self.get_or_404(submission_id)
+        stmt = (
+            select(SubmissionStatusHistory)
+            .where(SubmissionStatusHistory.submission_id == submission_id)
+            .order_by(SubmissionStatusHistory.created_at)
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def _resolve_signer_name(self) -> str:
+        """Return the Kepala Desa's display name for the signature block.
+
+        Single-village MVP: looks up the (single) user with role 'kades'.
+        A multi-village deployment would need this scoped by village_id —
+        a known, explicitly out-of-scope limitation while only one village
+        exists in the system.
+        """
+        from app.models.auth import Role as _Role
+        stmt = (
+            select(User)
+            .join(_Role, User.role_id == _Role.id)
+            .where(_Role.name == "kades", User.deleted_at.is_(None))
+            .limit(1)
+        )
+        kades = await self.session.scalar(stmt)
+        return kades.full_name if kades else "Kepala Desa"
+
+    def _generate_verification_code(self, village: Village, year: int) -> str:
+        """Generate a unique, human-typeable verification code."""
+        prefix = "".join(ch for ch in village.name.upper() if ch.isalpha())[:4] or "DESA"
+        suffix = secrets.token_hex(3).upper()
+        return f"{prefix}-{year}-{suffix}"
+
+    async def _issue(self, submission: Submission, actor: User) -> None:
+        """Allocate a real number, render the final PDF, and mark ISSUED."""
+        template = await self.template_repo.get(submission.template_id)
+        fields = await self._list_template_fields(submission.template_id)
+        village = await self.session.get(Village, submission.village_id)
+        submitter = await self.session.get(User, submission.submitted_by_user_id)
+        applicant = await self.resolve_applicant_data(submitter)
+
+        year = datetime.now(timezone.utc).year
+        seq = await LetterNumberService(self.session).allocate(submission.template_id, year)
+        letter_number = template.numbering_pattern.format(
+            prefix=template.numbering_prefix, seq=seq, year=year
+        )
+        verification_code = self._generate_verification_code(village, year)
+
+        base_url = get_settings().public_verify_base_url.rstrip("/")
+        qr_data_uri = generate_qr_data_uri(f"{base_url}/{verification_code}")
+        signer_name = await self._resolve_signer_name()
+        tanggal = datetime.now(timezone.utc).strftime("%d %B %Y")
+
+        pdf_bytes = TemplateRenderService().render_issued(
+            template=template, fields=fields, village=village,
+            answers=submission.answers, applicant=applicant, nomor=letter_number,
+            tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
+        )
+        storage_path = await FileStorageService().save(
+            pdf_bytes, f"{submission.id}.pdf", subdir="issued"
+        )
+
+        submission.status = SubmissionStatus.ISSUED
+        submission.letter_number = letter_number
+        submission.verification_code = verification_code
+        submission.pdf_storage_path = storage_path
+        submission.issued_at = datetime.now(timezone.utc)
+        self.session.add(SubmissionStatusHistory(
+            submission_id=submission.id, step_index=submission.current_step_index,
+            action=HistoryAction.ISSUED, actor_user_id=actor.id, note=None,
+        ))
+        logger.info(
+            "Submission issued id=%s letter_number=%s code=%s",
+            submission.id, letter_number, verification_code,
+        )
+
+    async def approve(
+        self, submission_id: uuid.UUID, actor: User, note: str | None
+    ) -> Submission:
+        """Advance a submission one step, or issue it if this was the final step."""
+        obj = await self.get_or_404(submission_id)
+        if obj.status != SubmissionStatus.PENDING:
+            raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
+        steps = await ApprovalStepConfigService(self.session).list_steps(obj.village_id)
+        if not steps:
+            raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
+        current_step = steps[obj.current_step_index]
+        if current_step.role_id != actor.role_id:
+            raise ForbiddenError("Bukan giliran Anda untuk memproses pengajuan ini")
+
+        is_last_step = obj.current_step_index == len(steps) - 1
+        if is_last_step:
+            await self._issue(obj, actor)
+        else:
+            obj.current_step_index += 1
+            self.session.add(SubmissionStatusHistory(
+                submission_id=obj.id, step_index=obj.current_step_index,
+                action=HistoryAction.APPROVED, actor_user_id=actor.id, note=note,
+            ))
+        await self.session.commit()
+        logger.info("Submission approve processed id=%s by=%s", obj.id, actor.id)
+        notify_status_change(obj, "issued" if is_last_step else "approved")
+        return obj
+
+    async def reject(self, submission_id: uuid.UUID, actor: User, reason: str) -> Submission:
+        """Reject a submission (terminal) with a mandatory reason."""
+        obj = await self.get_or_404(submission_id)
+        if obj.status != SubmissionStatus.PENDING:
+            raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
+        steps = await ApprovalStepConfigService(self.session).list_steps(obj.village_id)
+        if not steps:
+            raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
+        current_step = steps[obj.current_step_index]
+        if current_step.role_id != actor.role_id:
+            raise ForbiddenError("Bukan giliran Anda untuk memproses pengajuan ini")
+
+        obj.status = SubmissionStatus.REJECTED
+        obj.rejection_reason = reason
+        obj.rejected_by_user_id = actor.id
+        obj.rejected_at = datetime.now(timezone.utc)
+        self.session.add(SubmissionStatusHistory(
+            submission_id=obj.id, step_index=obj.current_step_index,
+            action=HistoryAction.REJECTED, actor_user_id=actor.id, note=reason,
+        ))
+        await self.session.commit()
+        logger.info("Submission rejected id=%s by=%s", obj.id, actor.id)
+        notify_status_change(obj, "rejected")
+        return obj
+
+    async def download_pdf(
+        self, submission_id: uuid.UUID, actor_user_id: uuid.UUID, actor_permissions: list[str]
+    ) -> bytes:
+        """Return the issued PDF's bytes, enforcing ownership or read_all."""
+        obj = await self.get_or_404(submission_id)
+        if obj.status != SubmissionStatus.ISSUED or obj.pdf_storage_path is None:
+            raise ValidationAppError("Surat belum terbit")
+        can_read_all = "*" in actor_permissions or "submission:read_all" in actor_permissions
+        if not can_read_all and obj.submitted_by_user_id != actor_user_id:
+            raise ForbiddenError("Anda tidak berhak mengunduh surat ini")
+        return await FileStorageService().read(obj.pdf_storage_path)
