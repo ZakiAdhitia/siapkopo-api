@@ -25,7 +25,7 @@ from app.services.approval_config import ApprovalStepConfigService
 from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
 from app.services.master import VillageProfileService
-from app.services.notification import notify_status_change
+from app.services.notification import NotificationService
 from app.services.template_render import TemplateRenderService
 
 logger = get_logger("submission")
@@ -41,6 +41,12 @@ class SubmissionService:
         self.session = session
         self.repo = BaseRepository(session, Submission)
         self.template_repo = BaseRepository(session, LetterTemplate)
+
+    async def _notify(self, obj: Submission, event: str, message: str) -> None:
+        """Notify the submission's owner of a status change (Bagian 9)."""
+        await NotificationService(self.session).notify(
+            obj.submitted_by_user_id, f"submission:{event}", "Status Pengajuan Surat", message,
+        )
 
     async def _list_template_fields(self, template_id: uuid.UUID) -> list[TemplateField]:
         stmt = (
@@ -119,7 +125,7 @@ class SubmissionService:
         ))
         await self.session.commit()
         logger.info("Submission created id=%s template_id=%s user_id=%s", obj.id, template_id, user.id)
-        notify_status_change(obj, "submitted")
+        await self._notify(obj, "submitted", "Pengajuan surat Anda telah diterima dan sedang diproses.")
         return obj
 
     async def get_or_404(self, id_: uuid.UUID) -> Submission:
@@ -251,7 +257,13 @@ class SubmissionService:
             ))
         await self.session.commit()
         logger.info("Submission approve processed id=%s by=%s", obj.id, actor.id)
-        notify_status_change(obj, "issued" if is_last_step else "approved")
+        if is_last_step:
+            await self._notify(obj, "issued", "Surat Anda telah terbit dan siap diambil di kantor desa.")
+        else:
+            await self._notify(
+                obj, "approved",
+                "Pengajuan surat Anda disetujui pada tahap ini dan lanjut ke tahap berikutnya.",
+            )
         return obj
 
     async def reject(self, submission_id: uuid.UUID, actor: User, reason: str) -> Submission:
@@ -276,7 +288,7 @@ class SubmissionService:
         ))
         await self.session.commit()
         logger.info("Submission rejected id=%s by=%s", obj.id, actor.id)
-        notify_status_change(obj, "rejected")
+        await self._notify(obj, "rejected", f"Pengajuan surat Anda ditolak. Alasan: {reason}")
         return obj
 
     async def download_pdf(

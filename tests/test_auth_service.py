@@ -98,18 +98,21 @@ async def test_permissions_for_unions_role_and_position(seeded_session):
     assert "submission:create" in perms
 
     # Directly attach an extra permission to Position "rt" and confirm the
-    # union picks it up without going through the Role at all.
+    # union picks it up without going through the Role at all. Uses a
+    # placeholder code, not a real seeded one (e.g. "lapduk:manage_own" is
+    # now an actually-seeded Position permission since the LAPDUK rework
+    # part shipped -- reusing it here would collide on insert).
     position = await seeded_session.scalar(
         select(Position).where(Position.slug == "rt")
     )
-    extra = Permission(code="lapduk:manage_own")
+    extra = Permission(code="test:placeholder_position_permission")
     seeded_session.add(extra)
     await seeded_session.flush()
     position.permissions.append(extra)
     await seeded_session.commit()
     await seeded_session.refresh(user)
     perms_after = svc.permissions_for(user)
-    assert "lapduk:manage_own" in perms_after
+    assert "test:placeholder_position_permission" in perms_after
     assert "submission:create" in perms_after  # role grant still present
 
 

@@ -23,6 +23,7 @@ from app.core.security import hash_password
 from app.models.auth import Position, Role, User
 from app.models.master import RT, RW
 from app.repositories.base import BaseRepository
+from app.services.notification import NotificationService
 
 logger = get_logger("user_management")
 
@@ -241,6 +242,11 @@ class UserManagementService:
         target.pending_approval = False
         await self.session.commit()
         logger.info("Registration approved by actor_id=%s target_id=%s", actor.id, target.id)
+        await NotificationService(self.session).notify(
+            target.id, "registration:approved", "Registrasi Disetujui",
+            "Akun Anda telah disetujui dan sekarang dapat digunakan untuk login.",
+            email_to=target.email,
+        )
         return target
 
     async def reject(
@@ -254,3 +260,8 @@ class UserManagementService:
         target.deleted_at = datetime.now(timezone.utc)
         await self.session.commit()
         logger.info("Registration rejected by actor_id=%s target_id=%s", actor.id, target.id)
+        if target.email:
+            NotificationService(self.session).provider.send_email(
+                target.email, "Registrasi Ditolak",
+                "Registrasi akun Anda tidak dapat disetujui. Hubungi kantor desa untuk informasi lebih lanjut.",
+            )
