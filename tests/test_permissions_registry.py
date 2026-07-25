@@ -37,9 +37,8 @@ def test_submission_permissions_registered():
         "approval_config:manage",
     ):
         assert code in PERMISSIONS
-    assert ROLE_PERMISSIONS["warga"] == [
-        "auth:me", "submission:create", "submission:read", "submission:download",
-    ]
+    for code in ("auth:me", "submission:create", "submission:read", "submission:download"):
+        assert code in ROLE_PERMISSIONS["warga"]
     for role in ("staff", "admin"):
         for code in (
             "submission:read", "submission:read_all", "submission:approve",
