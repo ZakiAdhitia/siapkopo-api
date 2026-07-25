@@ -227,3 +227,45 @@ async def test_register_duplicate_username_rejected(seeded_session):
             "password": "password123", "email": "dup@example.test",
             "position_choice": "staff", "nik": None, "rt_id": None, "rw_id": None,
         })
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_known_identifier_returns_dev_code(seeded_session):
+    svc = AuthService(seeded_session)
+    code = await svc.forgot_password("staf")
+    assert code is not None
+    assert len(code) == svc.password_reset.settings.password_reset_code_length
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_unknown_identifier_returns_none_silently(seeded_session):
+    svc = AuthService(seeded_session)
+    code = await svc.forgot_password("nosuchuser")
+    assert code is None  # no exception raised -- must not leak existence
+
+
+@pytest.mark.asyncio
+async def test_reset_password_success_changes_password_and_revokes_tokens(seeded_session):
+    svc = AuthService(seeded_session)
+    old_pair = await svc.login("staf", "staf123")
+    code = await svc.forgot_password("staf")
+    await svc.reset_password("staf", code, "newpassword456")
+
+    # Old refresh token must now be revoked.
+    with pytest.raises(UnauthorizedError):
+        await svc.refresh(old_pair["refresh_token"])
+
+    # New password works.
+    new_pair = await svc.login("staf", "newpassword456")
+    assert new_pair["access_token"]
+    # Old password no longer works.
+    with pytest.raises(UnauthorizedError):
+        await svc.login("staf", "staf123")
+
+
+@pytest.mark.asyncio
+async def test_reset_password_wrong_code_rejected(seeded_session):
+    svc = AuthService(seeded_session)
+    await svc.forgot_password("staf")
+    with pytest.raises(UnauthorizedError):
+        await svc.reset_password("staf", "000000", "newpassword456")

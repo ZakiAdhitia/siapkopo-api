@@ -16,6 +16,7 @@ from app.core.security import (
 from app.models.auth import Position, Role, User
 from app.models.master import RT, RW, Resident
 from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.services.password_reset import PasswordResetService
 
 logger = get_logger("auth")
 
@@ -48,6 +49,7 @@ class AuthService:
         self.refresh_tokens = RefreshTokenRepository(session)
         self.redis = get_redis()
         self.settings = get_settings()
+        self.password_reset = PasswordResetService()
 
     def permissions_for(self, user: User) -> list[str]:
         """Resolve effective permission codes for a user: Role ∪ Position.
@@ -214,3 +216,34 @@ class AuthService:
             user.id, user.username, position_slug, is_active,
         )
         return user, is_active
+
+    async def _resolve_by_identifier(self, identifier: str) -> User | None:
+        clean = identifier.strip()
+        user = await self.users.get_by_username(clean.lower())
+        if user is None:
+            user = await self.users.get_by_nik(clean)
+        return user
+
+    async def forgot_password(self, identifier: str) -> str | None:
+        """Generate a reset code for the matching account, if any.
+
+        Returns the raw code only for dev-mode convenience (None in
+        production or if no account matched) -- the caller must not use a
+        non-None/None distinction to reveal whether an account exists;
+        both cases return the same API response shape.
+        """
+        user = await self._resolve_by_identifier(identifier)
+        if user is None:
+            return None
+        code = await self.password_reset.request_reset(user)
+        return code if self.settings.app_env != "production" else None
+
+    async def reset_password(self, identifier: str, code: str, new_password: str) -> None:
+        """Verify a reset code and set a new password, revoking all sessions."""
+        user = await self._resolve_by_identifier(identifier)
+        if user is None or not await self.password_reset.verify_and_consume(user.id, code):
+            raise UnauthorizedError("Kode reset tidak valid atau kedaluwarsa")
+        user.hashed_password = hash_password(new_password)
+        await self.refresh_tokens.revoke_all_for_user(user.id)
+        await self.session.commit()
+        logger.info("Password reset sukses user_id=%s", user.id)
