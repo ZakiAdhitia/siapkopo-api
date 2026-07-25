@@ -81,8 +81,8 @@ async def test_export_residents_contains_imported_rows(db_session):
     assert any(r[0] == "3202" and r[1] == "Ani" for r in rows[1:])
 
 
-async def _token(client, username="operator", password="operator123"):
-    r = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+async def _token(client, identifier="operator", password="operator123"):
+    r = await client.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
     return r.json()["data"]["access_token"]
 
 

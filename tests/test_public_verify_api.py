@@ -6,8 +6,8 @@ from app.models.auth import Role
 from app.models.master import VillageProfile
 
 
-async def _token(client, username, password):
-    r = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+async def _token(client, identifier, password):
+    r = await client.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
     return r.json()["data"]["access_token"]
 
 

@@ -16,9 +16,10 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 async def _fake_redis():
     """Replace the module-singleton Redis client with an in-memory fake.
 
-    Redis is not running in this environment; OTP request/verify and the
-    logout blacklist go through ``app.core.redis.get_redis()``, so swapping
-    the singleton here makes those flows exercisable without a real server.
+    Redis is not running in this environment; forgot-password/reset-password
+    codes and the logout blacklist go through ``app.core.redis.get_redis()``,
+    so swapping the singleton here makes those flows exercisable without a
+    real server.
     """
     redis_module._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     yield
