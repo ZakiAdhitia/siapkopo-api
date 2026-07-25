@@ -12,6 +12,8 @@ preview rendering, and the 11 letter types seeded from the frontend's mock data,
 **Sub-project B2 / Phase 5-7**: citizen letter submissions, a village-configurable
 approval chain, and automatic PDF issuance with numbering, a visual signature, and a
 public no-auth QR-verification endpoint.
+Multi-village support was removed per the feature-adjustment rework; the system is
+now single-village (Desa Kopo) with a `VillageProfile` singleton.
 
 ## Overview
 
@@ -145,7 +147,7 @@ OTP (`POST /api/v1/auth/request-otp` with the NIK below, then
 ## API surface (current)
 
 - `POST /api/v1/auth/login`, `/request-otp`, `/verify-otp`, `/refresh`, `/logout`, `GET /me`
-- `GET/POST/PUT/DELETE /api/v1/villages`, `/dusun`, `/rw`, `/rt`, `/family-cards`
+- `GET/PUT /api/v1/village-profile`; `GET/POST/PUT/DELETE /api/v1/dusun`, `/rw`, `/rt`, `/family-cards`
 - `GET/POST/PUT/DELETE /api/v1/residents` (with `?search=&rt_id=&family_card_id=`)
 - `POST /api/v1/residents/import`, `GET /api/v1/residents/export` (xlsx)
 - `GET/POST/PUT/DELETE /api/v1/templates`, letter template CRUD (see Letter Templates below)
