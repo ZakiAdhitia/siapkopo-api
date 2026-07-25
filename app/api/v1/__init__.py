@@ -3,7 +3,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     approval_config, auth, dashboard, health, lapduk, letter_template, master, notification,
-    submission, users,
+    portal, public_portal, submission, users,
 )
 
 api_router = APIRouter()
@@ -17,3 +17,5 @@ api_router.include_router(users.router)
 api_router.include_router(lapduk.router)
 api_router.include_router(notification.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(portal.router)
+api_router.include_router(public_portal.router)

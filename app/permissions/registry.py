@@ -14,6 +14,7 @@ PERMISSIONS: list[str] = [
     "lapduk:manage_own", "lapduk:read_rw", "lapduk:read_all", "lapduk:export", "lapduk:import",
     "notification:read",
     "dashboard:read",
+    "portal:manage",
 ]
 
 # Role name -> permission codes. "*" means all permissions.
@@ -32,7 +33,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
               "submission:read", "submission:read_all", "submission:approve",
               "submission:reject", "submission:download", "approval_config:manage",
               "user:manage", "lapduk:read_all", "lapduk:export", "lapduk:import",
-              "notification:read", "dashboard:read"],
+              "notification:read", "dashboard:read", "portal:manage"],
     "administrator-it": ["*"],
 }
 
