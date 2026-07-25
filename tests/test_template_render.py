@@ -101,7 +101,7 @@ def test_render_preview_blocks_external_resource_fetch_and_stays_fast():
     )
 
 
-def test_render_issued_embeds_real_answers_and_qr():
+def test_render_issued_embeds_real_answers():
     template = _template()
     fields = _fields(template.id)
     profile = _profile()
@@ -112,8 +112,6 @@ def test_render_issued_embeds_real_answers_and_qr():
                    "alamat": "Jl. Nyata No. 1", "no_kk": "9876543210123456"},
         nomor="470/1/Ds.Kopo/2026",
         tanggal="24 Juli 2026",
-        signer_name="Wiwin Wildan",
-        qr_data_uri="data:image/png;base64,iVBORw0KGgo=",
     )
     assert pdf_bytes[:5] == b"%PDF-"
 

@@ -70,11 +70,11 @@ _LETTERHEAD = """<!DOCTYPE html>
   .judul { text-align: center; margin: 20px 0; }
   .judul .title { font-size: 13pt; font-weight: bold; text-decoration: underline; }
   .judul .nomor { font-size: 11pt; margin-top: 4px; }
-  .qr { text-align: center; margin-bottom: 10px; }
   .body { text-align: justify; line-height: 1.6; margin-bottom: 40px; }
   .ttd { text-align: right; margin-top: 40px; }
   .ttd .tempat-tanggal { margin-bottom: 60px; }
-  .ttd .nama { font-weight: bold; text-decoration: underline; }
+  .ttd .tanda-tangan-kosong { font-weight: bold; }
+  .ttd .ttd-label { font-size: 10pt; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -86,14 +86,11 @@ _LETTERHEAD = """<!DOCTYPE html>
     <div class="title">{{ letter_title }}</div>
     <div class="nomor">Nomor: {{ nomor }}</div>
   </div>
-  <div class="qr">
-    {% if qr_data_uri %}<img src="{{ qr_data_uri }}" width="80" height="80"/>{% endif %}
-  </div>
   <div class="body">{{ body|safe }}</div>
   <div class="ttd">
     <div class="tempat-tanggal">{{ village_name }}, {{ tanggal }}</div>
-    <div>Kepala Desa {{ village_name }}</div>
-    <div class="nama">{{ signer_name }}</div>
+    <div class="tanda-tangan-kosong">( ......................................... )</div>
+    <div class="ttd-label">Tanda Tangan &amp; Cap Basah</div>
   </div>
 </body>
 </html>
@@ -138,7 +135,7 @@ class TemplateRenderService:
 
     def _render_document(
         self, *, template: LetterTemplate, profile: VillageProfile, data: dict,
-        nomor: str, tanggal: str, signer_name: str, qr_data_uri: str | None = None,
+        nomor: str, tanggal: str,
     ) -> bytes:
         """Shared core: interpolate the body, wrap in the letterhead, render to PDF.
 
@@ -159,8 +156,6 @@ class TemplateRenderService:
             nomor=nomor,
             body=body_html,
             tanggal=tanggal,
-            signer_name=signer_name,
-            qr_data_uri=qr_data_uri or "",
         )
         buffer = io.BytesIO()
         previous_timeout = socket.getdefaulttimeout()
@@ -187,13 +182,11 @@ class TemplateRenderService:
             template=template, profile=profile, data=self._sample_data(fields),
             nomor=self._preview_number(template),
             tanggal=date.today().strftime("%d %B %Y"),
-            signer_name="(Contoh Tanda Tangan)",
         )
 
     def render_issued(
         self, *, template: LetterTemplate, fields: list[TemplateField], profile: VillageProfile,
-        answers: dict, applicant: dict, nomor: str, tanggal: str, signer_name: str,
-        qr_data_uri: str,
+        answers: dict, applicant: dict, nomor: str, tanggal: str,
     ) -> bytes:
         """Render the real issued letter using actual submission answers.
 
@@ -204,6 +197,5 @@ class TemplateRenderService:
         """
         data = {**applicant, **answers}
         return self._render_document(
-            template=template, profile=profile, data=data, nomor=nomor,
-            tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
+            template=template, profile=profile, data=data, nomor=nomor, tanggal=tanggal,
         )
