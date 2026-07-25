@@ -15,7 +15,6 @@ class _Read(BaseModel):
 
 
 class ApprovalStepConfigRead(_Read):
-    village_id: UUID
     order_index: int
     role_id: UUID
 
@@ -42,7 +41,6 @@ class SubmissionApproveRequest(BaseModel):
 
 
 class SubmissionRead(_Read):
-    village_id: UUID
     template_id: UUID
     submitted_by_user_id: UUID
     answers: dict

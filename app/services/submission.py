@@ -14,7 +14,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError, ValidationAppErro
 from app.core.logging import get_logger
 from app.models.auth import User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import FamilyCard, Resident, Village
+from app.models.master import FamilyCard, Resident, VillageProfile
 from app.models.submission import (
     HistoryAction,
     Submission,
@@ -26,6 +26,7 @@ from app.repositories.base import BaseRepository
 from app.services.approval_config import ApprovalStepConfigService
 from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
+from app.services.master import VillageProfileService
 from app.services.notification import notify_status_change
 from app.services.qr import generate_qr_data_uri
 from app.services.template_render import TemplateRenderService
@@ -109,7 +110,7 @@ class SubmissionService:
         self._validate_answers(fields, answers)
 
         obj = Submission(
-            village_id=template.village_id, template_id=template_id,
+            template_id=template_id,
             submitted_by_user_id=user.id, answers=answers,
             status=SubmissionStatus.PENDING, current_step_index=0,
         )
@@ -213,7 +214,7 @@ class SubmissionService:
         kades = await self.session.scalar(stmt)
         return kades.full_name if kades else "Kepala Desa"
 
-    def _generate_verification_code(self, village: Village, year: int) -> str:
+    def _generate_verification_code(self, village: VillageProfile, year: int) -> str:
         """Generate a unique, human-typeable verification code."""
         prefix = "".join(ch for ch in village.name.upper() if ch.isalpha())[:4] or "DESA"
         suffix = secrets.token_hex(3).upper()
@@ -223,7 +224,7 @@ class SubmissionService:
         """Allocate a real number, render the final PDF, and mark ISSUED."""
         template = await self.template_repo.get(submission.template_id)
         fields = await self._list_template_fields(submission.template_id)
-        village = await self.session.get(Village, submission.village_id)
+        village = await VillageProfileService(self.session).get()
         submitter = await self.session.get(User, submission.submitted_by_user_id)
         applicant = await self.resolve_applicant_data(submitter)
 
@@ -240,7 +241,7 @@ class SubmissionService:
         tanggal = datetime.now(timezone.utc).strftime("%d %B %Y")
 
         pdf_bytes = TemplateRenderService().render_issued(
-            template=template, fields=fields, village=village,
+            template=template, fields=fields, profile=village,
             answers=submission.answers, applicant=applicant, nomor=letter_number,
             tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
         )
@@ -269,7 +270,7 @@ class SubmissionService:
         obj = await self.get_or_404(submission_id)
         if obj.status != SubmissionStatus.PENDING:
             raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
-        steps = await ApprovalStepConfigService(self.session).list_steps(obj.village_id)
+        steps = await ApprovalStepConfigService(self.session).list_steps()
         if not steps:
             raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
         current_step = steps[obj.current_step_index]
@@ -295,7 +296,7 @@ class SubmissionService:
         obj = await self.get_or_404(submission_id)
         if obj.status != SubmissionStatus.PENDING:
             raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
-        steps = await ApprovalStepConfigService(self.session).list_steps(obj.village_id)
+        steps = await ApprovalStepConfigService(self.session).list_steps()
         if not steps:
             raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
         current_step = steps[obj.current_step_index]

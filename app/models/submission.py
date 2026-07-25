@@ -34,14 +34,13 @@ def _values_callable(enum_cls: type[enum.Enum]) -> list[str]:
 
 
 class ApprovalStepConfig(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """One ordered step in a village's configurable approval chain."""
+    """One ordered step in the global, configurable approval chain."""
 
     __tablename__ = "approval_step_configs"
     __table_args__ = (
-        UniqueConstraint("village_id", "order_index", name="uq_approval_step_village_order"),
+        UniqueConstraint("order_index", name="uq_approval_step_order"),
     )
 
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     order_index: Mapped[int] = mapped_column()
     role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"))
 
@@ -51,7 +50,6 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
 
     __tablename__ = "submissions"
 
-    village_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("villages.id"), index=True)
     template_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("letter_templates.id"), index=True
     )
