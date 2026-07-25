@@ -13,7 +13,6 @@ from app.core.security import (
 )
 from app.models.auth import User
 from app.repositories.auth import RefreshTokenRepository, UserRepository
-from app.services.otp import OtpService
 
 logger = get_logger("auth")
 
@@ -37,7 +36,6 @@ class AuthService:
         self.session = session
         self.users = UserRepository(session)
         self.refresh_tokens = RefreshTokenRepository(session)
-        self.otp = OtpService()
         self.redis = get_redis()
         self.settings = get_settings()
 
@@ -70,31 +68,23 @@ class AuthService:
             "expires_in": self.settings.access_token_expire_minutes * 60,
         }
 
-    async def login_password(self, username: str, password: str) -> dict:
-        """Authenticate a staff user by username + password."""
-        clean_username = username.strip().lower()
-        user = await self.users.get_by_username(clean_username)
+    async def login(self, identifier: str, password: str) -> dict:
+        """Authenticate by username OR NIK, both matched against `password`."""
+        clean = identifier.strip()
+        user = await self.users.get_by_username(clean.lower())
+        if user is None:
+            user = await self.users.get_by_nik(clean)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
-            logger.warning("Login gagal untuk username=%s", clean_username)
-            raise UnauthorizedError("Username atau kata sandi salah")
+            logger.warning("Login gagal untuk identifier=%s", clean)
+            raise UnauthorizedError("Identitas atau kata sandi salah")
         if not user.is_active:
-            logger.warning("Login ditolak (akun tidak aktif) untuk username=%s", clean_username)
+            if user.pending_approval:
+                logger.warning("Login ditolak (menunggu approval) untuk identifier=%s", clean)
+                raise UnauthorizedError("Akun Anda masih menunggu persetujuan")
+            logger.warning("Login ditolak (akun tidak aktif) untuk identifier=%s", clean)
             raise UnauthorizedError("Akun tidak aktif")
         result = await self._issue(user)
         logger.info("Login sukses user_id=%s role=%s", user.id, user.role.name)
-        return result
-
-    async def login_otp(self, nik: str, code: str) -> dict:
-        """Authenticate a warga by NIK + OTP."""
-        if not await self.otp.verify_otp(nik, code):
-            logger.warning("Login OTP gagal untuk nik=%s", nik)
-            raise UnauthorizedError("Kode OTP salah atau kedaluwarsa")
-        user = await self.users.get_by_nik(nik)
-        if not user or not user.is_active:
-            logger.warning("Login OTP ditolak (warga tidak terdaftar) untuk nik=%s", nik)
-            raise UnauthorizedError("Warga tidak terdaftar")
-        result = await self._issue(user)
-        logger.info("Login OTP sukses user_id=%s role=%s", user.id, user.role.name)
         return result
 
     async def refresh(self, raw_refresh: str) -> dict:

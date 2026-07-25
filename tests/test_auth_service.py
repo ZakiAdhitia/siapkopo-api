@@ -8,18 +8,43 @@ from app.services.auth import AuthService
 
 
 @pytest.mark.asyncio
-async def test_login_password_success(seeded_session):
+async def test_login_by_username_success(seeded_session):
     svc = AuthService(seeded_session)
-    pair = await svc.login_password("staf", "staf123")
+    pair = await svc.login("staf", "staf123")
     assert pair["access_token"]
     assert pair["token_type"] == "bearer"
 
 
 @pytest.mark.asyncio
-async def test_login_password_wrong(seeded_session):
+async def test_login_by_nik_success(seeded_session):
+    svc = AuthService(seeded_session)
+    pair = await svc.login("3516064588020003", "warga123")
+    assert pair["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password(seeded_session):
     svc = AuthService(seeded_session)
     with pytest.raises(UnauthorizedError):
-        await svc.login_password("staf", "wrong")
+        await svc.login("staf", "wrong")
+
+
+@pytest.mark.asyncio
+async def test_login_pending_approval_rejected(seeded_session):
+    """A pending_approval=True account cannot log in even with the right password."""
+    from app.core.security import hash_password
+    from app.models.auth import User
+    user = await AuthService(seeded_session).users.get_by_username("staf")
+    pending = User(
+        username="pendingstaff", full_name="Pending Staff",
+        hashed_password=hash_password("pending123"), role_id=user.role_id,
+        is_active=False, pending_approval=True,
+    )
+    seeded_session.add(pending)
+    await seeded_session.commit()
+    svc = AuthService(seeded_session)
+    with pytest.raises(UnauthorizedError):
+        await svc.login("pendingstaff", "pending123")
 
 
 @pytest.mark.asyncio
@@ -30,7 +55,7 @@ async def test_refresh_with_sqlite_naive_expiry_does_not_raise(seeded_session):
     this exercises the exact comparison path that used to crash.
     """
     svc = AuthService(seeded_session)
-    pair = await svc.login_password("staf", "staf123")
+    pair = await svc.login("staf", "staf123")
     new_pair = await svc.refresh(pair["refresh_token"])
     assert new_pair["access_token"]
     assert new_pair["refresh_token"] != pair["refresh_token"]
@@ -39,7 +64,7 @@ async def test_refresh_with_sqlite_naive_expiry_does_not_raise(seeded_session):
 @pytest.mark.asyncio
 async def test_refresh_rejects_reused_rotated_token(seeded_session):
     svc = AuthService(seeded_session)
-    pair = await svc.login_password("staf", "staf123")
+    pair = await svc.login("staf", "staf123")
     await svc.refresh(pair["refresh_token"])
     with pytest.raises(UnauthorizedError):
         await svc.refresh(pair["refresh_token"])
