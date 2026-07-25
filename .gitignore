@@ -7,3 +7,5 @@ venv/
 *.egg-info/
 .ruff_cache/
 /storage/
+/.superpowers/
+/docs/
