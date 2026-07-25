@@ -10,6 +10,7 @@ PERMISSIONS: list[str] = [
     "submission:create", "submission:read", "submission:read_all",
     "submission:approve", "submission:reject", "submission:download",
     "approval_config:manage",
+    "user:manage",
 ]
 
 # Role name -> permission codes. "*" means all permissions.
@@ -23,7 +24,8 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
               "village:manage", "dusun:manage", "rw:manage", "rt:manage", "family_card:manage",
               "template:manage", "template:read",
               "submission:read", "submission:read_all", "submission:approve",
-              "submission:reject", "submission:download", "approval_config:manage"],
+              "submission:reject", "submission:download", "approval_config:manage",
+              "user:manage"],
     "administrator-it": ["*"],
 }
 
