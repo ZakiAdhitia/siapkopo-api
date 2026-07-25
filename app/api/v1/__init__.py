@@ -2,8 +2,8 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
-    approval_config, auth, health, lapduk, letter_template, master, notification, submission,
-    users,
+    approval_config, auth, dashboard, health, lapduk, letter_template, master, notification,
+    submission, users,
 )
 
 api_router = APIRouter()
@@ -16,3 +16,4 @@ api_router.include_router(submission.router)
 api_router.include_router(users.router)
 api_router.include_router(lapduk.router)
 api_router.include_router(notification.router)
+api_router.include_router(dashboard.router)
