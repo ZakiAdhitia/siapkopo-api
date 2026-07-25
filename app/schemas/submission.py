@@ -47,7 +47,6 @@ class SubmissionRead(_Read):
     status: SubmissionStatus
     current_step_index: int | None = None
     letter_number: str | None = None
-    verification_code: str | None = None
     rejection_reason: str | None = None
     rejected_by_user_id: UUID | None = None
     rejected_at: datetime | None = None
@@ -69,13 +68,3 @@ class SubmissionAttachmentRead(_Read):
     content_type: str
     size_bytes: int
     created_at: datetime
-
-
-class PublicVerifyRead(BaseModel):
-    """Public-safe view of an issued letter — no PII beyond the applicant's own name."""
-
-    letter_number: str
-    template_name: str
-    applicant_name: str
-    issued_at: datetime
-    signed_by: str
