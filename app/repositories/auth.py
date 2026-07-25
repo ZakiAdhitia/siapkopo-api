@@ -54,3 +54,18 @@ class RefreshTokenRepository:
         """Mark a refresh token as revoked."""
         token.revoked_at = datetime.now(timezone.utc)
         await self.session.flush()
+
+    async def revoke_all_for_user(self, user_id: uuid.UUID) -> None:
+        """Revoke every active refresh token belonging to a user.
+
+        Used after a password reset, so a stolen/old session can't outlive
+        a credential change.
+        """
+        stmt = select(RefreshToken).where(
+            RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)
+        )
+        tokens = (await self.session.scalars(stmt)).all()
+        now = datetime.now(timezone.utc)
+        for token in tokens:
+            token.revoked_at = now
+        await self.session.flush()

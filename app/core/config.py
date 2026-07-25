@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    otp_ttl_seconds: int = 300
-    otp_length: int = 6
+    password_reset_ttl_seconds: int = 600
+    password_reset_code_length: int = 6
 
     # NoDecode stops pydantic-settings from JSON-decoding the raw env value,
     # so the validator below can split a plain comma-separated string.
