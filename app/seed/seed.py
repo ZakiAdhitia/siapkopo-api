@@ -6,7 +6,7 @@ from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.models.auth import Permission, Position, Role, User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import RT, RW, Dusun, Resident, Village
+from app.models.master import RT, RW, Dusun, Resident, VillageProfile
 from app.models.submission import ApprovalStepConfig
 from app.permissions.registry import (
     DEMO_ACCOUNTS, PERMISSIONS, POSITION_DEFS, POSITION_PERMISSIONS,
@@ -121,22 +121,30 @@ async def seed_rbac(session: AsyncSession) -> None:
                 len(existing_perms), len(existing_roles), len(DEMO_ACCOUNTS))
 
 
-async def seed_master(session: AsyncSession) -> None:
-    """Seed the village, dusun, RW/RT, and residents from mockData.
+async def seed_village_profile(session: AsyncSession) -> None:
+    """Seed the VillageProfile singleton from VILLAGE, if it doesn't exist yet.
 
-    Idempotent: re-running keeps the village/dusun singletons and skips any
+    Idempotent: no-op if a profile row already exists (e.g. created by the
+    village_profile-table migration's data copy, or a prior seed run).
+    """
+    existing = await session.scalar(select(VillageProfile))
+    if existing is not None:
+        return
+    session.add(VillageProfile(**VILLAGE))
+    await session.commit()
+    logger.info("seed_village_profile: created singleton profile")
+
+
+async def seed_master(session: AsyncSession) -> None:
+    """Seed the dusun, RW/RT, and residents from mockData.
+
+    Idempotent: re-running keeps the dusun singletons and skips any
     resident whose synthetic NIK already exists.
     """
-    village = await session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
-    if village is None:
-        village = Village(**VILLAGE)
-        session.add(village)
-        await session.flush()
-
     dusun_map = {d.name: d for d in (await session.scalars(select(Dusun))).all()}
     for name in DUSUN:
         if name not in dusun_map:
-            d = Dusun(village_id=village.id, name=name)
+            d = Dusun(name=name)
             session.add(d)
             dusun_map[name] = d
     await session.flush()
@@ -164,7 +172,7 @@ async def seed_master(session: AsyncSession) -> None:
             session.add(rt)
             await session.flush()
             rt_cache[(rw.id, rt_no)] = rt
-        session.add(Resident(village_id=village.id, nik=nik, full_name=name, rt_id=rt.id))
+        session.add(Resident(nik=nik, full_name=name, rt_id=rt.id))
         created += 1
     await session.commit()
     logger.info("seed_master complete: %d residents created (%d already present)",
@@ -174,24 +182,16 @@ async def seed_master(session: AsyncSession) -> None:
 async def seed_letter_templates(session: AsyncSession) -> None:
     """Seed the 11 letter templates (with fields) from mockData's suratTypes.
 
-    Idempotent: skips any template whose code already exists for the village.
-    Requires seed_master to have already created the village.
+    Idempotent: skips any template whose code already exists.
     """
-    village = await session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
-    if village is None:
-        raise RuntimeError("seed_letter_templates requires seed_master to run first")
-
     existing = {
-        t.code for t in (await session.scalars(
-            select(LetterTemplate).where(LetterTemplate.village_id == village.id)
-        )).all()
+        t.code for t in (await session.scalars(select(LetterTemplate))).all()
     }
     created = 0
     for entry in SURAT_TEMPLATES:
         if entry["code"] in existing:
             continue
         template = LetterTemplate(
-            village_id=village.id,
             code=entry["code"],
             name=entry["name"],
             description=entry["description"],
@@ -280,8 +280,7 @@ async def seed_link_demo_rt_rw(session: AsyncSession) -> None:
 
 
 async def seed_approval_steps(session: AsyncSession) -> None:
-    """Seed the default 2-step approval chain (staff, admin) for the
-    seeded village.
+    """Seed the default 2-step approval chain (staff, admin).
 
     Note: mockData's SETTINGS.approvalMode='3' (a 3-step staf/sekretaris/
     kades chain) no longer maps 1:1 onto the 4-role catalog -- sekretaris_
@@ -291,35 +290,30 @@ async def seed_approval_steps(session: AsyncSession) -> None:
     the approval-chain shape itself belongs to the later Submission/
     Approval/PDF rework part, not this RBAC/Position part.
 
-    Idempotent: skips if the village already has any configured steps.
+    Idempotent: skips if any steps are already configured.
     """
-    village = await session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
-    if village is None:
-        raise RuntimeError("seed_approval_steps requires seed_master to run first")
-
     existing_count = await session.scalar(
-        select(func.count()).select_from(ApprovalStepConfig).where(
-            ApprovalStepConfig.village_id == village.id
-        )
+        select(func.count()).select_from(ApprovalStepConfig)
     )
     if existing_count:
-        logger.info("seed_approval_steps: village already configured, skipping")
+        logger.info("seed_approval_steps: already configured, skipping")
         return
 
     roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
     for index, role_name in enumerate(("staff", "admin")):
         session.add(ApprovalStepConfig(
-            village_id=village.id, order_index=index, role_id=roles[role_name].id
+            order_index=index, role_id=roles[role_name].id
         ))
     await session.commit()
-    logger.info("seed_approval_steps: seeded 2-step chain for village_id=%s", village.id)
+    logger.info("seed_approval_steps: seeded 2-step chain")
 
 
 async def seed_all(session: AsyncSession) -> None:
-    """Run all seeders: positions, RBAC/demo-users, village hierarchy+residents,
-    letter templates, demo-resident/RT/RW links, default approval steps."""
+    """Run all seeders: positions, RBAC/demo-users, village profile,
+    master data, letter templates, demo links, default approval steps."""
     await seed_positions(session)
     await seed_rbac(session)
+    await seed_village_profile(session)
     await seed_master(session)
     await seed_letter_templates(session)
     await seed_link_demo_resident(session)
