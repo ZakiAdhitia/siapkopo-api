@@ -63,9 +63,6 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     current_step_index: Mapped[int | None] = mapped_column(nullable=True, default=0)
     letter_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    verification_code: Mapped[str | None] = mapped_column(
-        String(50), unique=True, nullable=True
-    )
     pdf_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(

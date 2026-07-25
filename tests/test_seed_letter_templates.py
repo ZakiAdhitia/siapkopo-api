@@ -11,11 +11,10 @@ async def test_seed_letter_templates_idempotent(db_session):
     await seed_letter_templates(db_session)
 
     template_count = await db_session.scalar(select(func.count()).select_from(LetterTemplate))
-    assert template_count == 11
+    assert template_count == 8
 
     field_count = await db_session.scalar(select(func.count()).select_from(TemplateField))
-    assert field_count == 32  # kk,domisili,usaha,sktm,lahir,mati,pindah,datang=3 each (24);
-    # ktp,kkpengantar=2 each (4); keramaian=4 → 24+4+4=32
+    assert field_count == 24  # kk,domisili,usaha,sktm,lahir,mati,pindah,datang=3 each (24)
 
     kk = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "kk"))
     assert kk.numbering_prefix == "474"

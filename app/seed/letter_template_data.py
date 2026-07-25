@@ -1,4 +1,4 @@
-"""Seed data for the 11 letter templates, transcribed from mockData.js suratTypes.
+"""Seed data for the 8 letter templates, transcribed from mockData.js suratTypes.
 
 Each entry's ``fields`` list holds tuples:
 (field_key, label, field_type, options, placeholder, is_required, validation_rules)
@@ -192,72 +192,6 @@ SURAT_TEMPLATES: list[dict] = [
             "Pindah Nomor {{ surat_pindah_asal }}.</p>"
             "<p>Demikian Surat Keterangan Kedatangan ini dibuat untuk dipergunakan "
             "sebagaimana mestinya.</p>"
-        ),
-    },
-    {
-        "code": "ktp", "name": "Pengantar KTP", "icon": "badge",
-        "color_bg": "#FDF3DC", "color_fg": "#B7791F",
-        "description": "Pengantar rekam/cetak KTP",
-        "required_documents": ["KK", "KTP lama (bila ada)"],
-        "numbering_prefix": "477",
-        "fields": [
-            ("keperluan", "Keperluan", "select",
-             ["KTP baru", "Perubahan data", "KTP hilang"], None, True, None),
-            ("keterangan", "Keterangan", "text", None, "detail keperluan", True, None),
-        ],
-        "pdf_body_template": (
-            "<p>Yang bertanda tangan di bawah ini, Kepala Desa, dengan ini memberikan "
-            "surat pengantar kepada:</p>"
-            "<p>Nama: <b>{{ nama }}</b><br>NIK: {{ nik }}<br>Alamat: {{ alamat }}</p>"
-            "<p>Untuk keperluan {{ keperluan }} dengan keterangan: {{ keterangan }}.</p>"
-            "<p>Surat pengantar ini dibuat agar yang bersangkutan dapat memproses KTP di "
-            "instansi terkait.</p>"
-        ),
-    },
-    {
-        "code": "kkpengantar", "name": "Pengantar KK", "icon": "contact_page",
-        "color_bg": "#FDF3DC", "color_fg": "#B7791F",
-        "description": "Pengantar cetak/ubah KK",
-        "required_documents": ["KTP", "KK lama (bila ada)"],
-        "numbering_prefix": "478",
-        "fields": [
-            ("keperluan", "Keperluan", "select",
-             ["KK baru", "Perubahan data", "KK hilang"], None, True, None),
-            ("keterangan", "Keterangan", "text", None, "detail keperluan", True, None),
-        ],
-        "pdf_body_template": (
-            "<p>Yang bertanda tangan di bawah ini, Kepala Desa, dengan ini memberikan "
-            "surat pengantar kepada:</p>"
-            "<p>Nama: <b>{{ nama }}</b><br>NIK: {{ nik }}<br>Alamat: {{ alamat }}</p>"
-            "<p>Untuk keperluan {{ keperluan }} dengan keterangan: {{ keterangan }}.</p>"
-            "<p>Surat pengantar ini dibuat agar yang bersangkutan dapat memproses Kartu "
-            "Keluarga di instansi terkait.</p>"
-        ),
-    },
-    {
-        "code": "keramaian", "name": "Izin Keramaian", "icon": "celebration",
-        "color_bg": "#F3EAFB", "color_fg": "#7B4BC0",
-        "description": "Izin acara / hajatan",
-        "required_documents": ["KTP penanggung jawab", "Denah lokasi"],
-        "numbering_prefix": "300",
-        "fields": [
-            ("jenis_acara", "Jenis Acara", "text", None, "mis. pernikahan", True, None),
-            ("tanggal_lokasi", "Tanggal & Lokasi", "text",
-             None, "kapan & di mana", True, None),
-            ("estimasi_peserta", "Estimasi Peserta", "number", None, "mis. 200", True, None),
-            ("penanggung_jawab", "Penanggung Jawab", "text",
-             None, "nama & kontak", True, None),
-        ],
-        "pdf_body_template": (
-            "<p>Yang bertanda tangan di bawah ini, Kepala Desa, memberikan izin "
-            "penyelenggaraan keramaian/acara dengan keterangan sebagai berikut:</p>"
-            "<p>Jenis Acara: {{ jenis_acara }}<br>Tanggal &amp; Lokasi: {{ tanggal_lokasi }}<br>"
-            "Estimasi Peserta: {{ estimasi_peserta }} orang<br>"
-            "Penanggung Jawab: {{ penanggung_jawab }}</p>"
-            "<p>Pemohon:</p>"
-            "<p>Nama: {{ nama }}<br>NIK: {{ nik }}<br>Alamat: {{ alamat }}</p>"
-            "<p>Demikian surat izin ini dibuat dengan ketentuan penyelenggara wajib menjaga "
-            "ketertiban dan keamanan selama acara berlangsung.</p>"
         ),
     },
 ]
