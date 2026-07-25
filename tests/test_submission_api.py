@@ -84,7 +84,6 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     body = approve2.json()["data"]
     assert body["status"] == "issued"
     assert body["letter_number"]
-    assert body["verification_code"]
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=wh)
     assert pdf.status_code == 200

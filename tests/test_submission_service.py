@@ -172,7 +172,6 @@ async def test_approve_full_chain_issues_pdf(seeded_session):
     s2 = await svc.approve(submission.id, users["admin"], "signed")
     assert s2.status.value == "issued"
     assert s2.letter_number is not None
-    assert s2.verification_code is not None
     assert s2.pdf_storage_path is not None
     assert s2.issued_at is not None
 

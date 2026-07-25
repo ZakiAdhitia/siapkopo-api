@@ -1,7 +1,6 @@
 """Submission service: creation with answer validation against TemplateField."""
 from __future__ import annotations
 
-import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -9,12 +8,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.models.auth import User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import FamilyCard, Resident, VillageProfile
+from app.models.master import FamilyCard, Resident
 from app.models.submission import (
     HistoryAction,
     Submission,
@@ -28,7 +26,6 @@ from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
 from app.services.master import VillageProfileService
 from app.services.notification import notify_status_change
-from app.services.qr import generate_qr_data_uri
 from app.services.template_render import TemplateRenderService
 
 logger = get_logger("submission")
@@ -193,33 +190,6 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
-    async def resolve_signer_name(self) -> str:
-        """Return the Kepala Desa's display name for the signature block.
-
-        Single-village MVP: looks up the (single) user whose Position is
-        Kepala Desa. Role name alone no longer identifies this -- sekretaris_
-        desa and kepala_desa share the "admin" Role, so Position is the only
-        reliable signal (see the 4-role-catalog + Position rework). A
-        multi-village deployment would need this scoped by village_id — a
-        known, explicitly out-of-scope limitation while only one village
-        exists in the system.
-        """
-        from app.models.auth import Position as _Position
-        stmt = (
-            select(User)
-            .join(_Position, User.position_id == _Position.id)
-            .where(_Position.slug == "kepala_desa", User.deleted_at.is_(None))
-            .limit(1)
-        )
-        kades = await self.session.scalar(stmt)
-        return kades.full_name if kades else "Kepala Desa"
-
-    def _generate_verification_code(self, village: VillageProfile, year: int) -> str:
-        """Generate a unique, human-typeable verification code."""
-        prefix = "".join(ch for ch in village.name.upper() if ch.isalpha())[:4] or "DESA"
-        suffix = secrets.token_hex(3).upper()
-        return f"{prefix}-{year}-{suffix}"
-
     async def _issue(self, submission: Submission, actor: User) -> None:
         """Allocate a real number, render the final PDF, and mark ISSUED."""
         template = await self.template_repo.get(submission.template_id)
@@ -233,17 +203,12 @@ class SubmissionService:
         letter_number = template.numbering_pattern.format(
             prefix=template.numbering_prefix, seq=seq, year=year
         )
-        verification_code = self._generate_verification_code(village, year)
-
-        base_url = get_settings().public_verify_base_url.rstrip("/")
-        qr_data_uri = generate_qr_data_uri(f"{base_url}/{verification_code}")
-        signer_name = await self.resolve_signer_name()
         tanggal = datetime.now(timezone.utc).strftime("%d %B %Y")
 
         pdf_bytes = TemplateRenderService().render_issued(
             template=template, fields=fields, profile=village,
             answers=submission.answers, applicant=applicant, nomor=letter_number,
-            tanggal=tanggal, signer_name=signer_name, qr_data_uri=qr_data_uri,
+            tanggal=tanggal,
         )
         storage_path = await FileStorageService().save(
             pdf_bytes, f"{submission.id}.pdf", subdir="issued"
@@ -251,7 +216,6 @@ class SubmissionService:
 
         submission.status = SubmissionStatus.ISSUED
         submission.letter_number = letter_number
-        submission.verification_code = verification_code
         submission.pdf_storage_path = storage_path
         submission.issued_at = datetime.now(timezone.utc)
         self.session.add(SubmissionStatusHistory(
@@ -259,8 +223,7 @@ class SubmissionService:
             action=HistoryAction.ISSUED, actor_user_id=actor.id, note=None,
         ))
         logger.info(
-            "Submission issued id=%s letter_number=%s code=%s",
-            submission.id, letter_number, verification_code,
+            "Submission issued id=%s letter_number=%s", submission.id, letter_number,
         )
 
     async def approve(
