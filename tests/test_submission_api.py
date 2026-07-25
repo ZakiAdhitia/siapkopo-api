@@ -51,7 +51,6 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
         "app.services.file_storage.get_settings",
         lambda: type("S", (), {
             "upload_storage_dir": str(tmp_path), "max_upload_size_bytes": 1024 * 1024,
-            "public_verify_base_url": "http://localhost:5173/verify",
         })(),
     )
     template_id = await _setup_village_template_workflow(client, db_session)
@@ -185,7 +184,6 @@ async def test_upload_attachment_rejects_non_owner(client, db_session, tmp_path,
         "app.services.file_storage.get_settings",
         lambda: type("S", (), {
             "upload_storage_dir": str(tmp_path), "max_upload_size_bytes": 1024 * 1024,
-            "public_verify_base_url": "http://localhost:5173/verify",
         })(),
     )
     template_id = await _setup_village_template_workflow(client, db_session)

@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     # so the validator below can split a plain comma-separated string.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
-    public_verify_base_url: str = "http://localhost:5173/verify"
     max_upload_size_bytes: int = 5 * 1024 * 1024  # 5 MB, matches FormSurat.jsx's stated limit
     upload_storage_dir: str = "storage"
 
