@@ -5,7 +5,8 @@ SQLAlchemy (async), PostgreSQL, Redis, and Alembic, following Clean Architecture
 (router → service → repository → model) with data-driven RBAC.
 
 This repository currently implements the **Foundation** (infrastructure, authentication —
-password + OTP login, JWT access/refresh, data-driven RBAC — and master data: village
+unified login (username or NIK + password), self-registration, forgot/reset password,
+JWT access/refresh, data-driven RBAC — and master data: village
 hierarchy, residents, Excel import/export, seeding), **Sub-project B1 / Phase 4, the
 Letter Template Engine**: dynamic letter templates + fields, sandboxed Jinja2/xhtml2pdf
 preview rendering, and the 11 letter types seeded from the frontend's mock data, and
@@ -59,9 +60,8 @@ Key variables in `.env`:
 
 ## Redis
 
-Redis backs OTP codes and the JWT access-token blacklist (used on every
-authenticated request, not just OTP login), so it must be running for anything
-beyond `/health` and password login to work end-to-end.
+Redis backs the JWT access-token blacklist (used on every authenticated request), so
+it must be running for anything beyond `/health` and login to work end-to-end.
 
 ```bash
 docker compose up -d redis
@@ -128,10 +128,9 @@ ruff check app tests
 
 ## Demo Accounts
 
-Created by `python -m app.seed`. Use these against `POST /api/v1/auth/login`
-(`{"username": ..., "password": ...}`) except `warga`, which authenticates via
-OTP (`POST /api/v1/auth/request-otp` with the NIK below, then
-`POST /api/v1/auth/verify-otp`).
+Created by `python -m app.seed`. Every account authenticates identically via
+`POST /api/v1/auth/login` with `{"identifier": ..., "password": ...}`, where
+`identifier` is the username for staff-tier accounts or the NIK for `warga`.
 
 | Username    | Password        | Role              | Position          | Notes |
 |-------------|------------------|-------------------|--------------------|-------|
@@ -146,7 +145,15 @@ OTP (`POST /api/v1/auth/request-otp` with the NIK below, then
 
 ## API surface (current)
 
-- `POST /api/v1/auth/login`, `/request-otp`, `/verify-otp`, `/refresh`, `/logout`, `GET /me`
+- `POST /api/v1/auth/register`, `/login`, `/forgot-password`, `/reset-password`,
+  `/refresh`, `/logout`, `GET /me`
+  - Self-registration (`POST /auth/register`) accepts `staff`/`rt`/`rw`/`warga`.
+    `warga` activates immediately, matched against Resident master data by NIK; the
+    other three are created with `pending_approval=true` and cannot log in until an
+    admin approves them — that approval endpoint is not yet built and ships in Part 5.
+  - `POST /auth/forgot-password` always responds with the same generic message
+    whether or not the identifier matches an account, so the API never reveals
+    account existence.
 - `GET/PUT /api/v1/village-profile`; `GET/POST/PUT/DELETE /api/v1/dusun`, `/rw`, `/rt`, `/family-cards`
 - `GET/POST/PUT/DELETE /api/v1/residents` (with `?search=&rt_id=&family_card_id=`)
 - `POST /api/v1/residents/import`, `GET /api/v1/residents/export` (xlsx)
