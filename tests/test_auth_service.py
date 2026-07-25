@@ -158,3 +158,72 @@ async def test_seed_rbac_corrects_stale_role_on_reseed(seeded_session):
     await seeded_session.refresh(user)
     assert user.role_id == correct_role_id
     assert user.position_id == correct_position_id
+
+
+@pytest.mark.asyncio
+async def test_register_warga_matches_resident_is_active(seeded_session):
+    """Registering as warga with a NIK that matches a seeded Resident activates immediately.
+
+    Uses Ahmad Fauzi's resident NIK (seed suffix "0011" -> "3516" +
+    "0011".zfill(12) -> "3516000000000011", per seed_master's nik formula).
+    Deliberately NOT the demo "warga" account's own nik ("3516064588020003",
+    an arbitrary DEMO_ACCOUNTS value unrelated to any Resident row) and NOT
+    "Siti Rohmah" (already linked to the demo "warga" user by
+    seed_link_demo_resident, which would make this a ConflictError case
+    instead of the success case this test wants).
+    """
+    from app.seed.seed import seed_master
+    await seed_master(seeded_session)
+    svc = AuthService(seeded_session)
+    user, is_active = await svc.register({
+        "full_name": "Ahmad Fauzi Baru", "username": "ahmadfauzi2",
+        "password": "password123", "email": "ahmadfauzi2@example.test",
+        "position_choice": "warga", "nik": "3516000000000011",
+        "rt_id": None, "rw_id": None,
+    })
+    assert is_active is True
+    assert user.is_active is True
+    assert user.pending_approval is False
+    assert user.resident_id is not None
+    assert user.role.name == "warga"
+    assert user.position.slug == "warga_desa"
+
+
+@pytest.mark.asyncio
+async def test_register_warga_unknown_nik_rejected(seeded_session):
+    from app.core.exceptions import ValidationAppError
+    svc = AuthService(seeded_session)
+    with pytest.raises(ValidationAppError):
+        await svc.register({
+            "full_name": "Orang Asing", "username": "orangasing",
+            "password": "password123", "email": "asing@example.test",
+            "position_choice": "warga", "nik": "9999999999999999",
+            "rt_id": None, "rw_id": None,
+        })
+
+
+@pytest.mark.asyncio
+async def test_register_staff_is_pending(seeded_session):
+    svc = AuthService(seeded_session)
+    user, is_active = await svc.register({
+        "full_name": "Staf Baru", "username": "stafbaru",
+        "password": "password123", "email": "stafbaru@example.test",
+        "position_choice": "staff", "nik": None, "rt_id": None, "rw_id": None,
+    })
+    assert is_active is False
+    assert user.is_active is False
+    assert user.pending_approval is True
+    assert user.role.name == "staff"
+    assert user.position.slug == "staff_desa"
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_username_rejected(seeded_session):
+    from app.core.exceptions import ConflictError
+    svc = AuthService(seeded_session)
+    with pytest.raises(ConflictError):
+        await svc.register({
+            "full_name": "Duplikat", "username": "staf",  # already a demo account
+            "password": "password123", "email": "dup@example.test",
+            "position_choice": "staff", "nik": None, "rt_id": None, "rw_id": None,
+        })
