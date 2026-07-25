@@ -2,9 +2,8 @@ import pytest
 from sqlalchemy import select
 
 from app.models.auth import User
-from app.models.master import Resident, Village
+from app.models.master import Resident
 from app.models.submission import ApprovalStepConfig
-from app.seed.data import VILLAGE
 from app.seed.seed import (
     seed_approval_steps, seed_link_demo_resident, seed_master, seed_positions, seed_rbac,
 )
@@ -35,11 +34,8 @@ async def test_seed_approval_steps_default_two_step_chain(db_session):
     await seed_master(db_session)
     await seed_approval_steps(db_session)
 
-    village = await db_session.scalar(select(Village).where(Village.name == VILLAGE["name"]))
     steps = list((await db_session.scalars(
-        select(ApprovalStepConfig)
-        .where(ApprovalStepConfig.village_id == village.id)
-        .order_by(ApprovalStepConfig.order_index)
+        select(ApprovalStepConfig).order_by(ApprovalStepConfig.order_index)
     )).all())
     assert len(steps) == 2
 
@@ -52,7 +48,5 @@ async def test_seed_approval_steps_default_two_step_chain(db_session):
 
     # idempotent
     await seed_approval_steps(db_session)
-    steps_again = list((await db_session.scalars(
-        select(ApprovalStepConfig).where(ApprovalStepConfig.village_id == village.id)
-    )).all())
+    steps_again = list((await db_session.scalars(select(ApprovalStepConfig))).all())
     assert len(steps_again) == 2

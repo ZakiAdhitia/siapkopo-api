@@ -2,12 +2,11 @@ import pytest
 from sqlalchemy import func, select
 
 from app.models.letter_template import LetterTemplate, TemplateField
-from app.seed.seed import seed_master, seed_letter_templates
+from app.seed.seed import seed_letter_templates
 
 
 @pytest.mark.asyncio
 async def test_seed_letter_templates_idempotent(db_session):
-    await seed_master(db_session)  # creates the village seed_letter_templates depends on
     await seed_letter_templates(db_session)
     await seed_letter_templates(db_session)
 

@@ -3,6 +3,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models.auth import Role
+from app.models.master import VillageProfile
 
 
 async def _token(client, username, password):
@@ -19,12 +20,16 @@ async def test_public_verify_returns_letter_details_for_issued_code(client, db_s
             "public_verify_base_url": "http://localhost:5173/verify",
         })(),
     )
+    # No create/delete endpoint for the village profile singleton (see
+    # VillageProfileService); seeded directly since PDF issuance below
+    # reads it via VillageProfileService.get().
+    db_session.add(VillageProfile(name="Desa Kopo"))
+    await db_session.commit()
+
     admin_tok = await _token(client, "operator", "operator123")
     h = {"Authorization": f"Bearer {admin_tok}"}
-    village = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    village_id = village.json()["data"]["id"]
     template = await client.post("/api/v1/templates", json={
-        "village_id": village_id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ nama }}</p>",
@@ -32,7 +37,7 @@ async def test_public_verify_returns_letter_details_for_issued_code(client, db_s
     template_id = template.json()["data"]["id"]
     roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
     await client.put("/api/v1/approval-steps", json={
-        "village_id": village_id, "steps": [{"role_id": roles["staff"]}],
+        "steps": [{"role_id": roles["staff"]}],
     }, headers=h)
 
     warga_tok = await _token(client, "warga", "warga123")

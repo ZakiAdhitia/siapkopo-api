@@ -1,6 +1,8 @@
 """Integration tests for master-data CRUD endpoints."""
 import pytest
 
+from app.models.master import VillageProfile
+
 
 async def _token(client, username="operator", password="operator123"):
     r = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
@@ -13,53 +15,66 @@ async def _auth_headers(client, username="operator", password="operator123"):
 
 
 @pytest.mark.asyncio
-async def test_village_crud_flow(client):
+async def test_village_profile_not_found_until_seeded(client):
+    """GET /village-profile 404s before the singleton row exists.
+
+    There is no create/delete for the village profile (it's a singleton --
+    see VillageProfileService); this replaces the old multi-village create
+    test, which no longer applies since that capability was removed.
+    """
     h = await _auth_headers(client)
-    created = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    assert created.status_code == 200
-    body = created.json()
-    assert body["success"] is True
-    vid = body["data"]["id"]
-
-    listed = await client.get("/api/v1/villages", headers=h)
-    assert listed.status_code == 200
-    page = listed.json()["data"]
-    assert page["total"] >= 1
-    assert page["page"] == 1
-    assert page["size"] == 20
-
-    got = await client.get(f"/api/v1/villages/{vid}", headers=h)
-    assert got.status_code == 200
-    assert got.json()["data"]["name"] == "Desa Kopo"
-
-    updated = await client.put(
-        f"/api/v1/villages/{vid}", json={"slogan": "Kopo Kita"}, headers=h
-    )
-    assert updated.status_code == 200
-    assert updated.json()["data"]["slogan"] == "Kopo Kita"
-
-    deleted = await client.delete(f"/api/v1/villages/{vid}", headers=h)
-    assert deleted.status_code == 200
-    assert deleted.json()["data"] is None
-
-    missing = await client.get(f"/api/v1/villages/{vid}", headers=h)
+    missing = await client.get("/api/v1/village-profile", headers=h)
     assert missing.status_code == 404
     assert missing.json()["error_code"] == "NOT_FOUND"
 
 
 @pytest.mark.asyncio
-async def test_village_requires_auth(client):
-    resp = await client.get("/api/v1/villages")
+async def test_village_profile_get_and_update_flow(client, db_session):
+    """GET/PUT work once the singleton row exists (seeded directly, since
+    there's no POST for it)."""
+    db_session.add(VillageProfile(name="Desa Kopo"))
+    await db_session.commit()
+
+    h = await _auth_headers(client)
+    got = await client.get("/api/v1/village-profile", headers=h)
+    assert got.status_code == 200
+    assert got.json()["data"]["name"] == "Desa Kopo"
+
+    updated = await client.put(
+        "/api/v1/village-profile", json={"slogan": "Kopo Kita"}, headers=h
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["slogan"] == "Kopo Kita"
+
+    got_again = await client.get("/api/v1/village-profile", headers=h)
+    assert got_again.json()["data"]["slogan"] == "Kopo Kita"
+
+
+@pytest.mark.asyncio
+async def test_village_profile_requires_auth(client):
+    resp = await client.get("/api/v1/village-profile")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_village_profile_update_requires_permission(client, db_session):
+    db_session.add(VillageProfile(name="Desa Kopo"))
+    await db_session.commit()
+
+    # staff has no village:manage — updating must 403.
+    h = await _auth_headers(client, "staf", "staf123")
+    resp = await client.put(
+        "/api/v1/village-profile", json={"slogan": "Nope"}, headers=h
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error_code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
 async def test_dusun_rw_rt_family_card_crud(client):
     h = await _auth_headers(client)
-    v = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    vid = v.json()["data"]["id"]
 
-    dusun = await client.post("/api/v1/dusun", json={"village_id": vid, "name": "Krajan"}, headers=h)
+    dusun = await client.post("/api/v1/dusun", json={"name": "Krajan"}, headers=h)
     assert dusun.status_code == 200
     did = dusun.json()["data"]["id"]
     assert (await client.get(f"/api/v1/dusun/{did}", headers=h)).json()["data"]["name"] == "Krajan"
@@ -74,7 +89,7 @@ async def test_dusun_rw_rt_family_card_crud(client):
 
     fc = await client.post(
         "/api/v1/family-cards",
-        json={"village_id": vid, "kk_number": "1234567890"},
+        json={"kk_number": "1234567890"},
         headers=h,
     )
     assert fc.status_code == 200
@@ -98,12 +113,10 @@ async def test_dusun_rw_rt_family_card_crud(client):
 @pytest.mark.asyncio
 async def test_resident_crud_search_and_filter(client):
     h = await _auth_headers(client)
-    v = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    vid = v.json()["data"]["id"]
 
     created = await client.post(
         "/api/v1/residents",
-        json={"nik": "1234567890123456", "full_name": "Budi Santoso", "village_id": vid},
+        json={"nik": "1234567890123456", "full_name": "Budi Santoso"},
         headers=h,
     )
     assert created.status_code == 200
@@ -127,19 +140,17 @@ async def test_resident_crud_search_and_filter(client):
 async def test_resident_create_duplicate_nik_returns_409(client):
     """A DB-level unique-constraint violation must surface as 409 CONFLICT, not 500."""
     h = await _auth_headers(client)
-    v = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    vid = v.json()["data"]["id"]
 
     first = await client.post(
         "/api/v1/residents",
-        json={"nik": "5555555555555555", "full_name": "Warga Pertama", "village_id": vid},
+        json={"nik": "5555555555555555", "full_name": "Warga Pertama"},
         headers=h,
     )
     assert first.status_code == 200
 
     dup = await client.post(
         "/api/v1/residents",
-        json={"nik": "5555555555555555", "full_name": "Warga Duplikat", "village_id": vid},
+        json={"nik": "5555555555555555", "full_name": "Warga Duplikat"},
         headers=h,
     )
     assert dup.status_code == 409
@@ -151,17 +162,10 @@ async def test_resident_create_duplicate_nik_returns_409(client):
 @pytest.mark.asyncio
 async def test_resident_requires_permission(client):
     # kades has only resident:read — creating must 403
-    v = await client.post(
-        "/api/v1/villages",
-        json={"name": "V"},
-        headers=await _auth_headers(client),
-    )
-    vid = v.json()["data"]["id"]
-
     h = await _auth_headers(client, "kades", "kades123")
     resp = await client.post(
         "/api/v1/residents",
-        json={"nik": "9", "full_name": "Z", "village_id": vid},
+        json={"nik": "9", "full_name": "Z"},
         headers=h,
     )
     assert resp.status_code == 403
@@ -171,11 +175,9 @@ async def test_resident_requires_permission(client):
 @pytest.mark.asyncio
 async def test_resident_read_allowed_for_kades(client):
     h_admin = await _auth_headers(client)
-    v = await client.post("/api/v1/villages", json={"name": "V2"}, headers=h_admin)
-    vid = v.json()["data"]["id"]
     await client.post(
         "/api/v1/residents",
-        json={"nik": "999", "full_name": "Y", "village_id": vid},
+        json={"nik": "999", "full_name": "Y"},
         headers=h_admin,
     )
 

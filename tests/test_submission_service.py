@@ -3,16 +3,16 @@ from sqlalchemy import select
 
 from app.core.exceptions import ForbiddenError, ValidationAppError
 from app.models.auth import Role, User
+from app.models.master import VillageProfile
 from app.services.approval_config import ApprovalStepConfigService
 from app.services.letter_template import LetterTemplateService
-from app.services.master import VillageService
 from app.services.submission import SubmissionService
 
 
-async def _make_template_with_fields(session, village_id):
+async def _make_template_with_fields(session):
     svc = LetterTemplateService(session)
     template = await svc.create({
-        "village_id": village_id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ alamat_tinggal_saat_ini }}</p>",
@@ -39,8 +39,7 @@ async def _make_warga_user(session, username: str) -> User:
 
 @pytest.mark.asyncio
 async def test_create_validates_required_fields(seeded_session):
-    village = await VillageService(seeded_session).create({"name": "Desa Kopo"})
-    template = await _make_template_with_fields(seeded_session, village.id)
+    template = await _make_template_with_fields(seeded_session)
     user = await _make_warga_user(seeded_session, "warga_test")
 
     svc = SubmissionService(seeded_session)
@@ -50,8 +49,7 @@ async def test_create_validates_required_fields(seeded_session):
 
 @pytest.mark.asyncio
 async def test_create_validates_select_options(seeded_session):
-    village = await VillageService(seeded_session).create({"name": "Desa Kopo"})
-    template = await _make_template_with_fields(seeded_session, village.id)
+    template = await _make_template_with_fields(seeded_session)
     user = await _make_warga_user(seeded_session, "warga_test2")
 
     svc = SubmissionService(seeded_session)
@@ -63,8 +61,7 @@ async def test_create_validates_select_options(seeded_session):
 
 @pytest.mark.asyncio
 async def test_create_succeeds_with_valid_answers(seeded_session):
-    village = await VillageService(seeded_session).create({"name": "Desa Kopo"})
-    template = await _make_template_with_fields(seeded_session, village.id)
+    template = await _make_template_with_fields(seeded_session)
     user = await _make_warga_user(seeded_session, "warga_test3")
 
     svc = SubmissionService(seeded_session)
@@ -86,10 +83,9 @@ async def test_add_attachment_validates_document_label(seeded_session, tmp_path,
             "upload_storage_dir": str(tmp_path), "max_upload_size_bytes": 1024 * 1024,
         })(),
     )
-    village = await VillageService(seeded_session).create({"name": "Desa Kopo"})
     tsvc = LetterTemplateService(seeded_session)
     template = await tsvc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p></p>", "required_documents": ["KTP"],
@@ -116,17 +112,22 @@ async def test_add_attachment_validates_document_label(seeded_session, tmp_path,
 
 
 async def _setup_pending_submission(session):
-    """Village + 2-step workflow (staff, admin) + one PENDING submission.
+    """Village profile + 2-step workflow (staff, admin) + one PENDING submission.
+
+    The village profile singleton is seeded directly here (there's no
+    create()/POST for it -- see VillageProfileService) since the final
+    approval step's PDF issuance reads it via VillageProfileService.get().
 
     Note: the old 3-role catalog had a 3-step staf/sekretaris/kades chain;
     the new 4-role catalog only distinguishes "staff" and "admin" here
     (sekretaris_desa and kepala_desa now share the "admin" Role), so the
     fixture seeds a 2-step chain instead. See app.seed.seed.seed_approval_steps.
     """
-    village = await VillageService(session).create({"name": "Desa Kopo"})
+    session.add(VillageProfile(name="Desa Kopo"))
+    await session.flush()
     tsvc = LetterTemplateService(session)
     template = await tsvc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ nama }} - {{ alamat_tinggal_saat_ini }}</p>",
@@ -137,7 +138,7 @@ async def _setup_pending_submission(session):
     })
     roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
     await ApprovalStepConfigService(session).replace_all(
-        village.id, [roles["staff"].id, roles["admin"].id]
+        [roles["staff"].id, roles["admin"].id]
     )
     warga = User(username="warga_flow", full_name="Warga Flow", hashed_password="x",
                  role_id=roles["warga"].id)

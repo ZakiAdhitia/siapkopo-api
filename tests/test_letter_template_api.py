@@ -1,25 +1,20 @@
 import pytest
 
+from app.models.master import VillageProfile
+
 
 async def _token(client, username="operator", password="operator123"):
     r = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
     return r.json()["data"]["access_token"]
 
 
-async def _village(client, token):
-    r = await client.post("/api/v1/villages", json={"name": "Desa Kopo"},
-                          headers={"Authorization": f"Bearer {token}"})
-    return r.json()["data"]["id"]
-
-
 @pytest.mark.asyncio
 async def test_template_and_field_crud_flow(client):
     tok = await _token(client)
     h = {"Authorization": f"Bearer {tok}"}
-    village_id = await _village(client, tok)
 
     created = await client.post("/api/v1/templates", json={
-        "village_id": village_id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ nama }}</p>",
@@ -56,11 +51,9 @@ async def test_template_and_field_crud_flow(client):
 @pytest.mark.asyncio
 async def test_template_manage_requires_permission(client):
     # staff has only template:read — creating must 403.
-    admin_tok = await _token(client)
-    village_id = await _village(client, admin_tok)
     staf_tok = await _token(client, "staf", "staf123")
     resp = await client.post("/api/v1/templates", json={
-        "village_id": village_id, "code": "x", "name": "X", "icon": "i",
+        "code": "x", "name": "X", "icon": "i",
         "color_bg": "#fff", "color_fg": "#000", "numbering_prefix": "1",
         "numbering_pattern": "{prefix}/{seq}/{year}", "pdf_body_template": "<p></p>",
     }, headers={"Authorization": f"Bearer {staf_tok}"})
@@ -72,12 +65,17 @@ async def test_template_manage_requires_permission(client):
 
 
 @pytest.mark.asyncio
-async def test_template_preview_returns_pdf(client):
+async def test_template_preview_returns_pdf(client, db_session):
+    # No create/delete endpoint for the village profile singleton (see
+    # VillageProfileService); seeded directly since the preview endpoint
+    # reads it via VillageProfileService.get().
+    db_session.add(VillageProfile(name="Desa Kopo"))
+    await db_session.commit()
+
     tok = await _token(client)
     h = {"Authorization": f"Bearer {tok}"}
-    village_id = await _village(client, tok)
     created = await client.post("/api/v1/templates", json={
-        "village_id": village_id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>Nama: {{ nama }}, Lama: {{ lama_tinggal }}</p>",

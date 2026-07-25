@@ -2,15 +2,13 @@
 import pytest
 from app.core.exceptions import NotFoundError, ValidationAppError
 from app.services.letter_template import LetterTemplateService
-from app.services.master import VillageService
 
 
 @pytest.mark.asyncio
 async def test_template_crud(db_session):
-    village = await VillageService(db_session).create({"name": "Desa Kopo"})
     svc = LetterTemplateService(db_session)
     obj = await svc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ nama }}</p>",
@@ -32,10 +30,9 @@ async def test_template_crud(db_session):
 
 @pytest.mark.asyncio
 async def test_field_crud_and_reorder(db_session):
-    village = await VillageService(db_session).create({"name": "Desa Kopo"})
     svc = LetterTemplateService(db_session)
     template = await svc.create({
-        "village_id": village.id, "code": "sktm", "name": "SKTM",
+        "code": "sktm", "name": "SKTM",
         "icon": "volunteer_activism", "color_bg": "#F3EAFB", "color_fg": "#7B4BC0",
         "numbering_prefix": "460", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ keperluan }}</p>",
@@ -74,10 +71,9 @@ async def test_field_crud_and_reorder(db_session):
 
 @pytest.mark.asyncio
 async def test_reorder_rejects_duplicate_ids(db_session):
-    village = await VillageService(db_session).create({"name": "Desa Kopo"})
     svc = LetterTemplateService(db_session)
     template = await svc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p></p>",
@@ -94,16 +90,15 @@ async def test_reorder_rejects_duplicate_ids(db_session):
 
 @pytest.mark.asyncio
 async def test_reorder_rejects_field_from_another_template(db_session):
-    village = await VillageService(db_session).create({"name": "Desa Kopo"})
     svc = LetterTemplateService(db_session)
     template_a = await svc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p></p>",
     })
     template_b = await svc.create({
-        "village_id": village.id, "code": "usaha", "name": "Ket. Usaha",
+        "code": "usaha", "name": "Ket. Usaha",
         "icon": "storefront", "color_bg": "#FDEFE7", "color_fg": "#C2582A",
         "numbering_prefix": "503", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p></p>",
@@ -120,10 +115,9 @@ async def test_reorder_rejects_field_from_another_template(db_session):
 
 @pytest.mark.asyncio
 async def test_update_field_ignores_field_key_change_attempt(db_session):
-    village = await VillageService(db_session).create({"name": "Desa Kopo"})
     svc = LetterTemplateService(db_session)
     template = await svc.create({
-        "village_id": village.id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p></p>",

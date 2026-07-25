@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.auth import Role, User
+from app.models.master import VillageProfile
 
 
 async def _token(client, username, password):
@@ -11,13 +12,21 @@ async def _token(client, username, password):
 
 
 async def _setup_village_template_workflow(client, db_session):
+    """Seed the village profile singleton + a letter template + a 2-step workflow.
+
+    The village profile has no create/delete endpoint (singleton -- see
+    VillageProfileService), so it's seeded directly via the DB session
+    rather than through the API. It's still required here because the
+    final approval step's PDF issuance reads it via VillageProfileService.get().
+    """
+    db_session.add(VillageProfile(name="Desa Kopo"))
+    await db_session.commit()
+
     admin_tok = await _token(client, "operator", "operator123")
     h = {"Authorization": f"Bearer {admin_tok}"}
-    village = await client.post("/api/v1/villages", json={"name": "Desa Kopo"}, headers=h)
-    village_id = village.json()["data"]["id"]
 
     template = await client.post("/api/v1/templates", json={
-        "village_id": village_id, "code": "domisili", "name": "Surat Domisili",
+        "code": "domisili", "name": "Surat Domisili",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}/Ds.Kopo/{year}",
         "pdf_body_template": "<p>{{ nama }} - {{ alamat_tinggal_saat_ini }}</p>",
@@ -31,10 +40,9 @@ async def _setup_village_template_workflow(client, db_session):
 
     roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
     await client.put("/api/v1/approval-steps", json={
-        "village_id": village_id,
         "steps": [{"role_id": roles["staff"]}, {"role_id": roles["admin"]}],
     }, headers=h)
-    return village_id, template_id
+    return template_id
 
 
 @pytest.mark.asyncio
@@ -46,7 +54,7 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
             "public_verify_base_url": "http://localhost:5173/verify",
         })(),
     )
-    village_id, template_id = await _setup_village_template_workflow(client, db_session)
+    template_id = await _setup_village_template_workflow(client, db_session)
 
     warga_tok = await _token(client, "warga", "warga123")
     wh = {"Authorization": f"Bearer {warga_tok}"}
@@ -88,7 +96,7 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
 
 @pytest.mark.asyncio
 async def test_approve_wrong_turn_returns_403(client, db_session):
-    village_id, template_id = await _setup_village_template_workflow(client, db_session)
+    template_id = await _setup_village_template_workflow(client, db_session)
     warga_tok = await _token(client, "warga", "warga123")
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji"},
@@ -115,7 +123,7 @@ async def _create_second_warga(db_session, username: str = "warga2") -> None:
 
 @pytest.mark.asyncio
 async def test_get_submission_rejects_non_owner(client, db_session):
-    village_id, template_id = await _setup_village_template_workflow(client, db_session)
+    template_id = await _setup_village_template_workflow(client, db_session)
     await _create_second_warga(db_session)
 
     warga_tok = await _token(client, "warga", "warga123")
@@ -147,7 +155,7 @@ async def test_get_submission_rejects_non_owner(client, db_session):
 
 @pytest.mark.asyncio
 async def test_get_submission_history_rejects_non_owner(client, db_session):
-    village_id, template_id = await _setup_village_template_workflow(client, db_session)
+    template_id = await _setup_village_template_workflow(client, db_session)
     await _create_second_warga(db_session)
 
     warga_tok = await _token(client, "warga", "warga123")
@@ -181,7 +189,7 @@ async def test_upload_attachment_rejects_non_owner(client, db_session, tmp_path,
             "public_verify_base_url": "http://localhost:5173/verify",
         })(),
     )
-    village_id, template_id = await _setup_village_template_workflow(client, db_session)
+    template_id = await _setup_village_template_workflow(client, db_session)
     await _create_second_warga(db_session)
 
     warga_tok = await _token(client, "warga", "warga123")

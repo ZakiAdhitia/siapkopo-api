@@ -1,19 +1,19 @@
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import Village
+from app.models.master import VillageProfile
 from app.services.template_render import TemplateRenderService
 import time
 import uuid
 
 
-def _village():
-    return Village(
+def _profile():
+    return VillageProfile(
         id=uuid.uuid4(), name="Desa Kopo", kecamatan="Cisarua", kabupaten="Bogor", provinsi="Jawa Barat"
     )
 
 
 def _template():
     return LetterTemplate(
-        id=uuid.uuid4(), village_id=uuid.uuid4(), code="domisili", name="Surat Domisili",
+        id=uuid.uuid4(), code="domisili", name="Surat Domisili",
         icon="home_pin", color_bg="#EAF6FF", color_fg="#2B76C9", is_active=True,
         required_documents=["KTP", "KK"], numbering_prefix="470",
         numbering_pattern="{prefix}/{seq}/Ds.Kopo/{year}",
@@ -41,7 +41,7 @@ def _fields(template_id):
 
 def test_render_preview_returns_valid_pdf():
     template = _template()
-    pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _village())
+    pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _profile())
     assert pdf_bytes[:5] == b"%PDF-"
 
 
@@ -92,7 +92,7 @@ def test_render_preview_blocks_external_resource_fetch_and_stays_fast():
     svc = TemplateRenderService()
 
     started = time.monotonic()
-    pdf_bytes = svc.render_preview(template, _fields(template.id), _village())
+    pdf_bytes = svc.render_preview(template, _fields(template.id), _profile())
     elapsed = time.monotonic() - started
 
     assert pdf_bytes[:5] == b"%PDF-"
@@ -104,9 +104,9 @@ def test_render_preview_blocks_external_resource_fetch_and_stays_fast():
 def test_render_issued_embeds_real_answers_and_qr():
     template = _template()
     fields = _fields(template.id)
-    village = _village()
+    profile = _profile()
     pdf_bytes = TemplateRenderService().render_issued(
-        template=template, fields=fields, village=village,
+        template=template, fields=fields, profile=profile,
         answers={"alamat_tinggal_saat_ini": "Jl. Nyata No. 1", "lama_tinggal": "3 tahun"},
         applicant={"nama": "Budi Nyata", "nik": "1234567890123456",
                    "alamat": "Jl. Nyata No. 1", "no_kk": "9876543210123456"},
@@ -120,5 +120,5 @@ def test_render_issued_embeds_real_answers_and_qr():
 
 def test_render_preview_still_works_after_refactor():
     template = _template()
-    pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _village())
+    pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _profile())
     assert pdf_bytes[:5] == b"%PDF-"
