@@ -368,28 +368,15 @@ class SubmissionService:
         logger.info("Applicant data completed submission_id=%s", submission_id)
         return obj
 
-    async def search_guest_submissions(
-        self, nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
-    ) -> list[Submission]:
-        """Find every guest/Mode-Loket submission matching NIK, WhatsApp, or
-        email (Bagian 8, STRATEGI doc rev. 2026-07-26) -- no tracking number
-        required, at least one identifier must be given. Only ever resolves
-        submissions with an applicant_resident_id set (guest or walk-in); a
-        logged-in user's own submission is never reachable this way.
-        """
-        conditions = []
-        if nik:
-            resident = await self.session.scalar(
-                select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
-            )
-            if resident is not None:
-                conditions.append(Submission.applicant_resident_id == resident.id)
-        if whatsapp:
-            conditions.append(Submission.guest_contact_whatsapp == whatsapp)
-        if email:
-            conditions.append(Submission.guest_contact_email == email)
-        if not conditions:
-            return []
+    async def search_guest_submissions(self, nik: str) -> list[Submission]:
+        """Find every guest/Mode-Loket submission matching the given NIK."""
+        resident = await self.session.scalar(
+            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
+        )
+        conditions = [Submission.pending_applicant_nik == nik]
+        if resident is not None:
+            conditions.append(Submission.applicant_resident_id == resident.id)
+
         stmt = (
             select(Submission)
             .where(or_(*conditions), Submission.deleted_at.is_(None))

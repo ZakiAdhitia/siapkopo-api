@@ -98,17 +98,11 @@ async def create_guest_submission(
     dependencies=[Depends(rate_limit("guest_track", limit=20, window_seconds=300))],
 )
 async def search_guest_submissions(
-    nik: str | None = Query(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$"),
-    whatsapp: str | None = Query(default=None),
-    email: str | None = Query(default=None),
+    nik: str = Query(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """List every guest/Mode Loket submission matching NIK, WhatsApp, or
-    Email -- no tracking number needed. At least one identifier is required.
-    """
-    if not (nik or whatsapp or email):
-        raise NotFoundError("Isi salah satu: NIK, No. WhatsApp, atau Email")
-    subs = await SubmissionService(session).search_guest_submissions(nik, whatsapp, email)
+    """List every guest/Mode Loket submission matching the given NIK."""
+    subs = await SubmissionService(session).search_guest_submissions(nik)
     return success_response([await _guest_track_read(session, s) for s in subs])
 
 
