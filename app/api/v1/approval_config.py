@@ -1,14 +1,27 @@
 """Village approval-step configuration endpoints."""
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import require_permission
+from app.models.auth import Role
+from app.schemas.auth import RoleRead
 from app.schemas.submission import ApprovalStepConfigRead, ApprovalStepsReplaceRequest
 from app.services.approval_config import ApprovalStepConfigService
 
 router = APIRouter(tags=["approval-config"])
+
+
+@router.get("/roles", response_model=Envelope[list[RoleRead]])
+async def list_roles(
+    session: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("approval_config:manage")),
+) -> dict:
+    """List the fixed Role catalog, for the approval-step config picker."""
+    roles = (await session.scalars(select(Role).where(Role.deleted_at.is_(None)))).all()
+    return success_response([RoleRead.model_validate(r).model_dump(mode="json") for r in roles])
 
 
 @router.get("/approval-steps", response_model=Envelope[list[ApprovalStepConfigRead]])

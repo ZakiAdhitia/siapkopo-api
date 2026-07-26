@@ -18,4 +18,9 @@ async def test_seed_letter_templates_idempotent(db_session):
 
     kk = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "kk"))
     assert kk.numbering_prefix == "474"
-    assert kk.required_documents == ["KK lama", "KTP kepala keluarga"]
+    assert kk.required_documents == ["Formulir Permohonan KK", "Kartu Keluarga Lama"]
+    assert kk.category_field_key == "status_perubahan"
+    assert set(kk.required_documents_by_category) == {
+        "KK Baru", "Penambahan Anggota (Kelahiran)", "Penambahan Anggota (Menumpang)",
+        "Pengurangan Anggota", "KK Hilang/Rusak",
+    }

@@ -89,7 +89,7 @@ async def test_dusun_rw_rt_family_card_crud(client):
 
     fc = await client.post(
         "/api/v1/family-cards",
-        json={"kk_number": "1234567890"},
+        json={"kk_number": "1234567890123456"},
         headers=h,
     )
     assert fc.status_code == 200
@@ -165,7 +165,7 @@ async def test_resident_requires_permission(client):
     h = await _auth_headers(client, "kades", "kades123")
     resp = await client.post(
         "/api/v1/residents",
-        json={"nik": "9", "full_name": "Z"},
+        json={"nik": "1111000000000009", "full_name": "Z"},
         headers=h,
     )
     assert resp.status_code == 403
@@ -177,7 +177,7 @@ async def test_resident_read_allowed_for_kades(client):
     h_admin = await _auth_headers(client)
     await client.post(
         "/api/v1/residents",
-        json={"nik": "999", "full_name": "Y"},
+        json={"nik": "1111000000000999", "full_name": "Y"},
         headers=h_admin,
     )
 

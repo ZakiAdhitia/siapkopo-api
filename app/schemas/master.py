@@ -2,7 +2,7 @@
 from datetime import date
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _Read(BaseModel):
@@ -93,12 +93,12 @@ class RTRead(_Read):
 
 
 class FamilyCardCreate(BaseModel):
-    kk_number: str
+    kk_number: str = Field(min_length=16, max_length=16, pattern=r"^\d{16}$")
     address: str | None = None
 
 
 class FamilyCardUpdate(BaseModel):
-    kk_number: str | None = None
+    kk_number: str | None = Field(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$")
     address: str | None = None
 
 
@@ -108,7 +108,7 @@ class FamilyCardRead(_Read):
 
 
 class ResidentCreate(BaseModel):
-    nik: str
+    nik: str = Field(min_length=16, max_length=16, pattern=r"^\d{16}$")
     full_name: str
     family_card_id: UUID | None = None
     rt_id: UUID | None = None
@@ -143,6 +143,14 @@ class ResidentRead(_Read):
     occupation: str | None = None
     phone: str | None = None
     address: str | None = None
+    # Populated by the router (not the ORM object): denormalized display
+    # fields so resident:read (staff) doesn't need rt:manage/rw:manage/
+    # dusun:manage/family_card:manage (admin-only) just to show where
+    # someone lives -- see the master-data screen's requirements.
+    kk_number: str | None = None
+    rt_number: str | None = None
+    rw_number: str | None = None
+    dusun_name: str | None = None
 
 
 class ResidentImportError(BaseModel):

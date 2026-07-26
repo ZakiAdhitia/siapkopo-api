@@ -32,6 +32,22 @@ async def test_replace_and_list_approval_steps(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_list_roles_returns_seeded_catalog(client):
+    tok = await _token(client)
+    resp = await client.get("/api/v1/roles", headers={"Authorization": f"Bearer {tok}"})
+    assert resp.status_code == 200
+    names = [r["name"] for r in resp.json()["data"]]
+    assert set(names) == {"warga", "staff", "admin", "administrator-it"}
+
+
+@pytest.mark.asyncio
+async def test_list_roles_requires_manage_permission(client):
+    tok = await _token(client, "staf", "staf123")
+    resp = await client.get("/api/v1/roles", headers={"Authorization": f"Bearer {tok}"})
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_replace_requires_manage_permission(client):
     # staff lacks approval_config:manage (admin -- kades/sekdes -- has it).
     tok = await _token(client, "staf", "staf123")

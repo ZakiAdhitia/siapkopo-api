@@ -2,19 +2,34 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
-from app.models.auth import User
+from app.models.auth import Position, User
 from app.repositories.auth import UserRepository
 from app.schemas.common import Page
-from app.schemas.user_management import UserCreate, UserRead, UserUpdate
+from app.schemas.user_management import PositionRead, UserCreate, UserRead, UserUpdate
 from app.services.user_management import UserManagementService
 
 router = APIRouter(tags=["users"])
+
+
+@router.get("/positions", response_model=Envelope[list[PositionRead]])
+async def list_positions(
+    session: AsyncSession = Depends(get_db),
+    _: CurrentUser = Depends(require_permission("user:manage")),
+) -> dict:
+    """List the fixed Position catalog, ordered by hierarchy level."""
+    positions = (
+        await session.scalars(select(Position).order_by(Position.level))
+    ).all()
+    return success_response(
+        [PositionRead.model_validate(p).model_dump(mode="json") for p in positions]
+    )
 
 
 def _user_read(user: User) -> dict:

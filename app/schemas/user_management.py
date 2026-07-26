@@ -2,7 +2,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.auth import _validate_email_format
 
@@ -39,6 +39,19 @@ class UserUpdate(BaseModel):
     @classmethod
     def _check_email(cls, v: str | None) -> str | None:
         return v if v is None else _validate_email_format(v)
+
+
+class PositionRead(BaseModel):
+    """Read-only listing of the fixed Position catalog -- Position itself has
+    no create/update/delete API by design, but admin user-management forms
+    need this to populate a position picker with real ids."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    slug: str
+    display_name: str
+    level: int
 
 
 class UserRead(BaseModel):

@@ -53,10 +53,27 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     template_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("letter_templates.id"), index=True
     )
-    submitted_by_user_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("users.id"), index=True
+    # Null for a guest submission (Bagian 3.2, STRATEGI doc) -- no account was
+    # ever created, so there is no user to attribute the submission to.
+    submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("users.id"), index=True, nullable=True
     )
+    # Who the letter is FOR, decoupled from who submitted it -- populated for
+    # guest submissions (resolved/auto-created by NIK) and, later, Mode Loket
+    # (staff submits on a resident's behalf). Null for a normal logged-in
+    # warga submission, where the applicant is resolved via the user instead.
+    applicant_resident_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("residents.id"), nullable=True
+    )
+    # Guest-only contact for status notifications (no user account to read an
+    # email from) and as an alternate lookup key for the no-login status
+    # check (Bagian 8, STRATEGI doc rev. 2026-07-26). WhatsApp is stored as
+    # plain contact metadata only -- no outbound WhatsApp channel exists
+    # anywhere in this system; notifications still only go out by email.
+    guest_contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guest_contact_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    physical_documents_promised: Mapped[bool] = mapped_column(default=False)
     status: Mapped[SubmissionStatus] = mapped_column(
         SAEnum(SubmissionStatus, native_enum=False, length=20, values_callable=_values_callable),
         default=SubmissionStatus.PENDING,

@@ -20,6 +20,7 @@ from app.dependencies.pagination import PaginationParams, pagination_params
 from app.repositories.auth import UserRepository
 from app.schemas.common import Page
 from app.schemas.lapduk import LapdukImportResult, LapdukRead, LapdukUpsert
+from app.schemas.master import RTRead
 from app.services.lapduk import LapdukService
 
 router = APIRouter(tags=["lapduk"])
@@ -27,6 +28,20 @@ router = APIRouter(tags=["lapduk"])
 
 async def _load_actor(session: AsyncSession, current: CurrentUser):
     return await UserRepository(session).get_by_id(UUID(current.id))
+
+
+# Static route: must precede parameterized routes with the same prefix (none
+# exist on this router today, but keeping the convention from letter_template.py/
+# public_submission.py in case one is added later).
+@router.get("/lapduk/rts", response_model=Envelope[list[RTRead]])
+async def list_lapduk_rts(
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("auth:me")),
+) -> dict:
+    """RTs the caller may fill a LAPDUK report for (own RT, own RW's RTs, or all)."""
+    actor = await _load_actor(session, current)
+    rts = await LapdukService(session).list_visible_rts(actor, current.permissions)
+    return success_response([RTRead.model_validate(r).model_dump(mode="json") for r in rts])
 
 
 @router.post("/lapduk", response_model=Envelope[LapdukRead])

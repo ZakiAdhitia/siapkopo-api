@@ -1,7 +1,10 @@
 """Resident Excel import/export."""
 import io
+import re
 from datetime import date, datetime
 from typing import Any
+
+_NIK_PATTERN = re.compile(r"^\d{16}$")
 
 import openpyxl
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,6 +63,8 @@ class ResidentExcelService:
                     name = str(record.get("full_name") or "").strip()
                     if not nik or not name:
                         raise ValueError("nik dan full_name wajib diisi")
+                    if not _NIK_PATTERN.match(nik):
+                        raise ValueError("nik harus 16 digit angka")
                     await self.residents.repo.create(
                         nik=nik,
                         full_name=name,

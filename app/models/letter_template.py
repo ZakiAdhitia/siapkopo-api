@@ -19,6 +19,18 @@ class FieldType(str, enum.Enum):
     TEXTAREA = "textarea"
 
 
+class LetterOutputCategory(str, enum.Enum):
+    """Where a letter's output lands once issued (Bagian 4.3, STRATEGI doc).
+
+    DESA_DIRECT letters are final once issued by the village. DUKCAPIL_PENGANTAR
+    letters are a cover form the applicant must still take to Kecamatan/Disdukcapil
+    for further processing.
+    """
+
+    DESA_DIRECT = "desa_direct"
+    DUKCAPIL_PENGANTAR = "dukcapil_pengantar"
+
+
 class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A letter type's metadata, dynamic-form definition, and PDF body template."""
 
@@ -35,9 +47,30 @@ class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     color_fg: Mapped[str] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(default=True)
     required_documents: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Conditional Sub-Category Form (Bagian 4.2, STRATEGI doc): when set,
+    # required documents vary by the value of one dynamic field instead of
+    # being a fixed list -- e.g. KK's 5 permohonan categories (Baru,
+    # Kelahiran, Menumpang, Pengurangan, Hilang/Rusak) each need different
+    # supporting documents (SYARAT-PENGAJUAN-SURAT.md). `category_field_key`
+    # names which TemplateField.field_key drives the choice;
+    # `required_documents_by_category` maps that field's answer value to its
+    # own required_documents list. Both null means "not conditional" --
+    # required_documents above is used as-is, same as every other template.
+    category_field_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    required_documents_by_category: Mapped[dict[str, list[str]] | None] = mapped_column(
+        JSON, nullable=True
+    )
     numbering_prefix: Mapped[str] = mapped_column(String(20))
     numbering_pattern: Mapped[str] = mapped_column(String(100))
     pdf_body_template: Mapped[str] = mapped_column(Text)
+    output_category: Mapped[LetterOutputCategory] = mapped_column(
+        SAEnum(
+            LetterOutputCategory, native_enum=False, length=30,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        default=LetterOutputCategory.DESA_DIRECT,
+    )
+    post_issuance_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class TemplateField(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):

@@ -1,9 +1,11 @@
 """Local-disk file storage, behind an interface swappable for object storage
 (Cloudflare R2) later without touching any caller."""
+import io
 import uuid
 from pathlib import Path
 
 import aiofiles
+from PIL import Image, ImageFilter, ImageStat
 
 from app.core.config import get_settings
 from app.core.exceptions import ValidationAppError
@@ -12,6 +14,17 @@ from app.core.logging import get_logger
 logger = get_logger("file_storage")
 
 _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "application/pdf"}
+_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png"}
+
+# Edge-variance (Laplacian-style, via PIL's FIND_EDGES filter) below this is
+# treated as "too blurry to verify" -- Bagian 6, STRATEGI doc rev.
+# 2026-07-26 anti-fraud requirement: a guest-submitted KTP/KK photo must
+# actually be legible for staff to check, not just present. Calibrated
+# against a synthetic sharp-text image (variance ~9200) vs the same image
+# Gaussian-blurred (variance drops to ~300-400 once visibly blurry) -- this
+# is a heuristic default, not a precise measurement, and may need tuning
+# against real submitted photos once in production.
+_BLUR_VARIANCE_THRESHOLD = 500.0
 
 
 class FileStorageService:
@@ -28,6 +41,25 @@ class FileStorageService:
             raise ValidationAppError(
                 f"Tipe file tidak didukung: {content_type}. "
                 "Gunakan JPG, PNG, atau PDF."
+            )
+
+    def check_not_blurry(self, content: bytes, content_type: str, document_label: str) -> None:
+        """Raise ValidationAppError if a JPEG/PNG photo looks too blurry to
+        verify. Skipped for PDF (not a photo) and for any image PIL can't
+        decode -- this is a best-effort quality aid for staff, not a hard
+        content-format gate (validate_upload already covers that).
+        """
+        if content_type not in _IMAGE_CONTENT_TYPES:
+            return
+        try:
+            img = Image.open(io.BytesIO(content)).convert("L")
+        except Exception:
+            return
+        edges = img.filter(ImageFilter.FIND_EDGES)
+        variance = ImageStat.Stat(edges).var[0]
+        if variance < _BLUR_VARIANCE_THRESHOLD:
+            raise ValidationAppError(
+                f"Foto '{document_label}' terlihat buram, mohon foto ulang yang lebih jelas dan fokus."
             )
 
     async def save(self, content: bytes, original_filename: str, subdir: str) -> str:

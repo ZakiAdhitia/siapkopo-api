@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationAppError
@@ -24,7 +24,7 @@ from app.repositories.base import BaseRepository
 from app.services.approval_config import ApprovalStepConfigService
 from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
-from app.services.master import VillageProfileService
+from app.services.master import ResidentService, VillageProfileService
 from app.services.notification import NotificationService
 from app.services.template_render import TemplateRenderService
 
@@ -43,10 +43,20 @@ class SubmissionService:
         self.template_repo = BaseRepository(session, LetterTemplate)
 
     async def _notify(self, obj: Submission, event: str, message: str) -> None:
-        """Notify the submission's owner of a status change (Bagian 9)."""
-        await NotificationService(self.session).notify(
-            obj.submitted_by_user_id, f"submission:{event}", "Status Pengajuan Surat", message,
-        )
+        """Notify the submission's owner of a status change (Bagian 9).
+
+        Guest submissions (no user account) have no in-app inbox to write
+        to -- notify by email directly to the contact address they gave
+        instead.
+        """
+        if obj.submitted_by_user_id is not None:
+            await NotificationService(self.session).notify(
+                obj.submitted_by_user_id, f"submission:{event}", "Status Pengajuan Surat", message,
+            )
+        elif obj.guest_contact_email:
+            NotificationService(self.session).provider.send_email(
+                obj.guest_contact_email, "Status Pengajuan Surat", message,
+            )
 
     async def _list_template_fields(self, template_id: uuid.UUID) -> list[TemplateField]:
         stmt = (
@@ -81,6 +91,18 @@ class SubmissionService:
         if errors:
             raise ValidationAppError("; ".join(errors))
 
+    async def _applicant_data_from_resident(self, resident: Resident) -> dict:
+        """Build {nama, nik, alamat, no_kk} directly from a Resident row."""
+        kk_number = "-"
+        if resident.family_card_id is not None:
+            fc = await self.session.get(FamilyCard, resident.family_card_id)
+            if fc is not None:
+                kk_number = fc.kk_number
+        return {
+            "nama": resident.full_name, "nik": resident.nik,
+            "alamat": resident.address or "-", "no_kk": kk_number,
+        }
+
     async def resolve_applicant_data(self, user: User) -> dict:
         """Build {nama, nik, alamat, no_kk} for auto-fill and PDF placeholders.
 
@@ -94,17 +116,41 @@ class SubmissionService:
         resident = await self.session.get(Resident, user.resident_id)
         if resident is None:
             return fallback
-        kk_number = "-"
-        if resident.family_card_id is not None:
-            fc = await self.session.get(FamilyCard, resident.family_card_id)
-            if fc is not None:
-                kk_number = fc.kk_number
-        return {
-            "nama": resident.full_name, "nik": resident.nik,
-            "alamat": resident.address or "-", "no_kk": kk_number,
-        }
+        return await self._applicant_data_from_resident(resident)
 
-    async def create(self, user: User, template_id: uuid.UUID, answers: dict[str, Any]) -> Submission:
+    async def resolve_applicant_data_for_submission(self, submission: Submission) -> dict:
+        """Like resolve_applicant_data, but for a Submission of any origin:
+        a logged-in user's own submission, a guest submission, or a Mode
+        Loket walk-in (where submitted_by_user_id is the STAFF, not the
+        applicant). applicant_resident_id -- who the letter is actually
+        for -- always takes priority when set; only a normal logged-in
+        warga submission (no applicant_resident_id at all) falls back to
+        resolving the applicant from the submitting user.
+        """
+        if submission.applicant_resident_id is not None:
+            resident = await self.session.get(Resident, submission.applicant_resident_id)
+            if resident is None:
+                return {"nama": "-", "nik": "-", "alamat": "-", "no_kk": "-"}
+            return await self._applicant_data_from_resident(resident)
+        if submission.submitted_by_user_id is not None:
+            user = await self.session.get(User, submission.submitted_by_user_id)
+            return await self.resolve_applicant_data(user)
+        return {"nama": "-", "nik": "-", "alamat": "-", "no_kk": "-"}
+
+    async def lookup_applicant_by_nik(self, nik: str) -> dict | None:
+        """Public autofill lookup for the guest submission form: exact NIK
+        match only, or None if no Resident has that NIK on file."""
+        resident = await self.session.scalar(
+            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
+        )
+        if resident is None:
+            return None
+        return await self._applicant_data_from_resident(resident)
+
+    async def create(
+        self, user: User, template_id: uuid.UUID, answers: dict[str, Any],
+        physical_documents_promised: bool = False,
+    ) -> Submission:
         """Create a new submission after validating answers against the template."""
         template = await self.template_repo.get(template_id)
         if template is None or not template.is_active:
@@ -115,6 +161,7 @@ class SubmissionService:
         obj = Submission(
             template_id=template_id,
             submitted_by_user_id=user.id, answers=answers,
+            physical_documents_promised=physical_documents_promised,
             status=SubmissionStatus.PENDING, current_step_index=0,
         )
         self.session.add(obj)
@@ -127,6 +174,211 @@ class SubmissionService:
         logger.info("Submission created id=%s template_id=%s user_id=%s", obj.id, template_id, user.id)
         await self._notify(obj, "submitted", "Pengajuan surat Anda telah diterima dan sedang diproses.")
         return obj
+
+    @staticmethod
+    def _resolve_required_documents(template: LetterTemplate, answers: dict[str, Any]) -> list[str]:
+        """Conditional Sub-Category Form (Bagian 4.2, STRATEGI doc): if the
+        template has a category_field_key configured, required documents
+        depend on that field's answer (e.g. KK's 5 permohonan categories
+        each need different supporting documents). Falls back to the flat
+        required_documents list otherwise -- every non-conditional template.
+        """
+        if template.category_field_key and template.required_documents_by_category:
+            category_value = answers.get(template.category_field_key)
+            docs = template.required_documents_by_category.get(category_value)
+            if docs is not None:
+                return docs
+        return template.required_documents
+
+    async def _resolve_or_create_resident(
+        self, nik: str, applicant_nama: str | None, applicant_alamat: str | None,
+    ) -> Resident:
+        """Look up a Resident by NIK, auto-creating a minimal row if none
+        exists yet -- the "every transaction enriches the population master
+        data" pattern shared by the guest flow and Mode Loket (Bagian 3, 5.1
+        STRATEGI doc).
+        """
+        resident = await self.session.scalar(
+            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
+        )
+        if resident is None:
+            if not applicant_nama:
+                raise ValidationAppError("NIK belum terdaftar, mohon isi nama lengkap pemohon")
+            resident = await ResidentService(self.session).create({
+                "nik": nik, "full_name": applicant_nama, "address": applicant_alamat,
+            })
+        return resident
+
+    async def create_guest(
+        self, template_id: uuid.UUID, nik: str, answers: dict[str, Any], contact_email: str,
+        attachments: list[tuple[str, str, bytes, str]],
+        applicant_nama: str | None = None, applicant_alamat: str | None = None,
+        contact_whatsapp: str | None = None,
+    ) -> Submission:
+        """Create a submission with no account (Bagian 3.2, STRATEGI doc).
+
+        Resolves the applicant by NIK, auto-creating a minimal Resident row
+        if none exists yet -- the same "every transaction enriches the
+        population master data" pattern Mode Loket uses.
+
+        `attachments` is `[(document_label, filename, content, content_type), ...]`
+        -- exactly one file per template.required_documents entry is
+        mandatory (Bagian 6, STRATEGI doc rev. 2026-07-26 anti-fraud
+        requirement: no more "I'll bring it physically" opt-out for guests),
+        each validated for size/mime and checked for blur before anything is
+        written to the database.
+        """
+        template = await self.template_repo.get(template_id)
+        if template is None or not template.is_active:
+            raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
+        fields = await self._list_template_fields(template_id)
+        self._validate_answers(fields, answers)
+
+        required_docs = set(self._resolve_required_documents(template, answers))
+        given_labels = [label for label, _, _, _ in attachments]
+        if set(given_labels) != required_docs or len(given_labels) != len(required_docs):
+            raise ValidationAppError(
+                "Lampiran wajib diunggah lengkap: " + ", ".join(sorted(required_docs))
+            )
+
+        storage = FileStorageService()
+        for label, _filename, content, content_type in attachments:
+            storage.validate_upload(content, content_type)
+            storage.check_not_blurry(content, content_type, label)
+
+        resident = await self._resolve_or_create_resident(nik, applicant_nama, applicant_alamat)
+
+        obj = Submission(
+            template_id=template_id,
+            submitted_by_user_id=None, applicant_resident_id=resident.id,
+            guest_contact_email=contact_email, guest_contact_whatsapp=contact_whatsapp,
+            answers=answers,
+            physical_documents_promised=False,
+            status=SubmissionStatus.PENDING, current_step_index=0,
+        )
+        self.session.add(obj)
+        await self.session.flush()
+        for label, filename, content, content_type in attachments:
+            storage_path = await storage.save(content, filename, subdir="attachments")
+            self.session.add(SubmissionAttachment(
+                submission_id=obj.id, document_label=label,
+                original_filename=filename, stored_filename=storage_path.rsplit("/", 1)[-1],
+                content_type=content_type, size_bytes=len(content), storage_path=storage_path,
+            ))
+        self.session.add(SubmissionStatusHistory(
+            submission_id=obj.id, step_index=0, action=HistoryAction.SUBMITTED,
+            actor_user_id=None, note=None,
+        ))
+        await self.session.commit()
+        logger.info(
+            "Guest submission created id=%s template_id=%s resident_id=%s attachments=%d",
+            obj.id, template_id, resident.id, len(attachments),
+        )
+        NotificationService(self.session).provider.send_email(
+            contact_email, "Pengajuan Surat Diterima",
+            f"Pengajuan Anda telah diterima dan sedang diproses. Nomor Pengajuan: {obj.id}. "
+            "Cek status kapan saja dengan NIK, No. WhatsApp, atau Email Anda di halaman Cek Status.",
+        )
+        return obj
+
+    async def create_walkin(
+        self, actor: User, template_id: uuid.UUID, nik: str, answers: dict[str, Any],
+        applicant_nama: str | None = None, applicant_alamat: str | None = None,
+    ) -> Submission:
+        """Mode Loket (Bagian 3.1, STRATEGI doc): staff enters a walk-in
+        citizen's request on their behalf and it is issued immediately --
+        the citizen already brought physical KTP/KK for the staff to verify
+        in person, so the normal approval chain is skipped entirely.
+        """
+        template = await self.template_repo.get(template_id)
+        if template is None or not template.is_active:
+            raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
+        fields = await self._list_template_fields(template_id)
+        self._validate_answers(fields, answers)
+
+        resident = await self._resolve_or_create_resident(nik, applicant_nama, applicant_alamat)
+
+        obj = Submission(
+            template_id=template_id,
+            submitted_by_user_id=actor.id, applicant_resident_id=resident.id,
+            answers=answers, physical_documents_promised=True,
+            status=SubmissionStatus.PENDING, current_step_index=0,
+        )
+        self.session.add(obj)
+        await self.session.flush()
+        self.session.add(SubmissionStatusHistory(
+            submission_id=obj.id, step_index=0, action=HistoryAction.SUBMITTED,
+            actor_user_id=actor.id, note="Diinput via Mode Loket",
+        ))
+        await self._issue(obj, actor)
+        await self.session.commit()
+        logger.info(
+            "Walk-in submission created & issued id=%s template_id=%s by=%s resident_id=%s",
+            obj.id, template_id, actor.id, resident.id,
+        )
+        return obj
+
+    async def search_guest_submissions(
+        self, nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
+    ) -> list[Submission]:
+        """Find every guest/Mode-Loket submission matching NIK, WhatsApp, or
+        email (Bagian 8, STRATEGI doc rev. 2026-07-26) -- no tracking number
+        required, at least one identifier must be given. Only ever resolves
+        submissions with an applicant_resident_id set (guest or walk-in); a
+        logged-in user's own submission is never reachable this way.
+        """
+        conditions = []
+        if nik:
+            resident = await self.session.scalar(
+                select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
+            )
+            if resident is not None:
+                conditions.append(Submission.applicant_resident_id == resident.id)
+        if whatsapp:
+            conditions.append(Submission.guest_contact_whatsapp == whatsapp)
+        if email:
+            conditions.append(Submission.guest_contact_email == email)
+        if not conditions:
+            return []
+        stmt = (
+            select(Submission)
+            .where(or_(*conditions), Submission.deleted_at.is_(None))
+            .order_by(Submission.created_at.desc())
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def get_guest_submission_or_404(
+        self, submission_id: uuid.UUID,
+        nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
+    ) -> Submission:
+        """Resolve one specific guest/walk-in submission (e.g. for PDF
+        download): the submission id plus at least one matching identifier.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.applicant_resident_id is None:
+            raise NotFoundError("Pengajuan tidak ditemukan")
+        matched = False
+        if nik:
+            resident = await self.session.get(Resident, obj.applicant_resident_id)
+            matched = matched or (resident is not None and resident.nik == nik)
+        if whatsapp:
+            matched = matched or obj.guest_contact_whatsapp == whatsapp
+        if email:
+            matched = matched or obj.guest_contact_email == email
+        if not matched:
+            raise NotFoundError("Pengajuan tidak ditemukan")
+        return obj
+
+    async def download_pdf_guest(
+        self, submission_id: uuid.UUID,
+        nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
+    ) -> bytes:
+        """Like download_pdf, but for a guest resolving their own submission
+        by id + a matching identifier instead of an authenticated session."""
+        obj = await self.get_guest_submission_or_404(submission_id, nik, whatsapp, email)
+        if obj.status != SubmissionStatus.ISSUED or obj.pdf_storage_path is None:
+            raise ValidationAppError("Surat belum terbit")
+        return await FileStorageService().read(obj.pdf_storage_path)
 
     async def get_or_404(self, id_: uuid.UUID) -> Submission:
         """Return the submission with the given id, or raise NotFoundError."""
@@ -201,8 +453,7 @@ class SubmissionService:
         template = await self.template_repo.get(submission.template_id)
         fields = await self._list_template_fields(submission.template_id)
         village = await VillageProfileService(self.session).get()
-        submitter = await self.session.get(User, submission.submitted_by_user_id)
-        applicant = await self.resolve_applicant_data(submitter)
+        applicant = await self.resolve_applicant_data_for_submission(submission)
 
         year = datetime.now(timezone.utc).year
         seq = await LetterNumberService(self.session).allocate(submission.template_id, year)

@@ -34,3 +34,8 @@ class ConflictError(AppException):
 class ValidationAppError(AppException):
     def __init__(self, message: str = "Validation error") -> None:
         super().__init__(message, "VALIDATION_ERROR", 422)
+
+
+class TooManyRequestsError(AppException):
+    def __init__(self, message: str = "Terlalu banyak permintaan, coba lagi nanti") -> None:
+        super().__init__(message, "TOO_MANY_REQUESTS", 429)

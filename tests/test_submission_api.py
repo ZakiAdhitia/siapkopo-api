@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.auth import Role, User
-from app.models.master import VillageProfile
+from app.models.master import FamilyCard, Resident, VillageProfile
 
 
 async def _token(client, identifier, password):
@@ -90,6 +90,53 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
 
     history = await client.get(f"/api/v1/submissions/{submission_id}/history", headers=wh)
     assert [h["action"] for h in history.json()["data"]] == ["submitted", "approved", "issued"]
+
+
+@pytest.mark.asyncio
+async def test_get_my_applicant_data_falls_back_to_user_fields(client, db_session):
+    """The `client` fixture only seeds RBAC (no seed_master/link step), so the
+    demo 'warga' account has no linked Resident here -- exercises the
+    User-fallback branch of SubmissionService.resolve_applicant_data.
+    """
+    warga_tok = await _token(client, "warga", "warga123")
+    resp = await client.get(
+        "/api/v1/submissions/me/applicant-data",
+        headers={"Authorization": f"Bearer {warga_tok}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data == {"nama": "Siti Rohmah", "nik": "3516064588020003", "alamat": "-", "no_kk": "-"}
+
+
+@pytest.mark.asyncio
+async def test_get_my_applicant_data_returns_linked_resident(client, db_session):
+    """When the user IS linked to a Resident/FamilyCard, prefer that over the
+    User-row fallback (exercises the other branch of resolve_applicant_data).
+    """
+    fc = FamilyCard(kk_number="3516000000009999", address="Jl. Merdeka 1")
+    db_session.add(fc)
+    await db_session.flush()
+    resident = Resident(
+        nik="3516000000001234", full_name="Warga Uji", family_card_id=fc.id,
+        address="Jl. Merdeka 1 RT 01/RW 01",
+    )
+    db_session.add(resident)
+    await db_session.flush()
+
+    warga_user = await db_session.scalar(select(User).where(User.username == "warga"))
+    warga_user.resident_id = resident.id
+    await db_session.commit()
+
+    warga_tok = await _token(client, "warga", "warga123")
+    resp = await client.get(
+        "/api/v1/submissions/me/applicant-data",
+        headers={"Authorization": f"Bearer {warga_tok}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {
+        "nama": "Warga Uji", "nik": "3516000000001234",
+        "alamat": "Jl. Merdeka 1 RT 01/RW 01", "no_kk": "3516000000009999",
+    }
 
 
 @pytest.mark.asyncio

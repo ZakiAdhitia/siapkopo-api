@@ -2,19 +2,21 @@
 import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import NotFoundError
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
 from app.models.auth import User
-from app.schemas.common import Page, build_page
+from app.schemas.common import Page
 from app.schemas.submission import (
-    SubmissionApproveRequest, SubmissionAttachmentRead, SubmissionCreate, SubmissionRead,
-    SubmissionRejectRequest, SubmissionStatusHistoryRead,
+    ApplicantDataRead, ApplicantLookupRead, SubmissionApproveRequest, SubmissionAttachmentRead,
+    SubmissionCreate, SubmissionRead, SubmissionRejectRequest, SubmissionStatusHistoryRead,
+    SubmissionWalkinCreate,
 )
 from app.services.submission import SubmissionService
 
@@ -28,6 +30,23 @@ async def _load_user(session: AsyncSession, current: CurrentUser) -> User:
     return user
 
 
+async def _submission_read(session: AsyncSession, obj) -> dict:
+    """Build a SubmissionRead dict enriched with the applicant's name.
+
+    Staff/admin reviewing a submission need to know who it's for, whether it
+    came from a logged-in user or a guest -- resolve it the same way the
+    PDF-issuance path already does
+    (SubmissionService.resolve_applicant_data_for_submission).
+    """
+    data = SubmissionRead.model_validate(obj).model_dump(mode="json")
+    applicant = await SubmissionService(session).resolve_applicant_data_for_submission(obj)
+    data["applicant_nama"] = applicant["nama"]
+    data["applicant_nik"] = applicant["nik"]
+    data["applicant_alamat"] = applicant["alamat"]
+    data["applicant_no_kk"] = applicant["no_kk"]
+    return data
+
+
 @router.post("/submissions", response_model=Envelope[SubmissionRead])
 async def create_submission(
     body: SubmissionCreate,
@@ -36,8 +55,53 @@ async def create_submission(
 ) -> dict:
     """Create a new letter submission."""
     user = await _load_user(session, current)
-    obj = await SubmissionService(session).create(user, body.template_id, body.answers)
-    return success_response(SubmissionRead.model_validate(obj).model_dump(mode="json"), "Tersimpan")
+    obj = await SubmissionService(session).create(
+        user, body.template_id, body.answers, body.physical_documents_promised
+    )
+    return success_response(await _submission_read(session, obj), "Tersimpan")
+
+
+@router.post("/submissions/walkin", response_model=Envelope[SubmissionRead])
+async def create_walkin_submission(
+    body: SubmissionWalkinCreate,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:walkin")),
+) -> dict:
+    """Mode Loket: staff submits and immediately issues on a walk-in citizen's behalf."""
+    actor = await _load_user(session, current)
+    obj = await SubmissionService(session).create_walkin(
+        actor, body.template_id, body.nik, body.answers,
+        body.applicant_nama, body.applicant_alamat,
+    )
+    return success_response(await _submission_read(session, obj), "Surat terbit")
+
+
+@router.get("/submissions/walkin/applicant-lookup", response_model=Envelope[ApplicantLookupRead])
+async def lookup_walkin_applicant(
+    nik: str = Query(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:walkin")),
+) -> dict:
+    """Autofill lookup for the Mode Loket form: exact NIK match only."""
+    data = await SubmissionService(session).lookup_applicant_by_nik(nik)
+    if data is None:
+        raise NotFoundError("NIK belum terdaftar")
+    return success_response(data)
+
+
+@router.get("/submissions/me/applicant-data", response_model=Envelope[ApplicantDataRead])
+async def get_my_applicant_data(
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:create")),
+) -> dict:
+    """Auto-fill data (nama/nik/alamat/no_kk) for the caller's own submission form.
+
+    Static route: must precede /submissions/{submission_id} so "me" is never
+    parsed as a submission id.
+    """
+    user = await _load_user(session, current)
+    data = await SubmissionService(session).resolve_applicant_data(user)
+    return success_response(data)
 
 
 @router.get("/submissions", response_model=Envelope[Page[SubmissionRead]])
@@ -51,7 +115,10 @@ async def list_submissions(
     items, total = await SubmissionService(session).list(
         current.permissions, _UUID(current.id), p.page, p.size
     )
-    return success_response(build_page(items, total, p.page, p.size, SubmissionRead))
+    return success_response({
+        "items": [await _submission_read(session, i) for i in items],
+        "total": total, "page": p.page, "size": p.size,
+    })
 
 
 @router.get("/submissions/{submission_id}", response_model=Envelope[SubmissionRead])
@@ -65,7 +132,7 @@ async def get_submission(
     obj = await SubmissionService(session).get_scoped(
         submission_id, _UUID(current.id), current.permissions
     )
-    return success_response(SubmissionRead.model_validate(obj).model_dump(mode="json"))
+    return success_response(await _submission_read(session, obj))
 
 
 @router.post("/submissions/{submission_id}/attachments", response_model=Envelope[SubmissionAttachmentRead])
@@ -98,7 +165,7 @@ async def approve_submission(
     """Approve a submission at its current step (or issue it if this was the final step)."""
     user = await _load_user(session, current)
     obj = await SubmissionService(session).approve(submission_id, user, body.note)
-    return success_response(SubmissionRead.model_validate(obj).model_dump(mode="json"), "Diproses")
+    return success_response(await _submission_read(session, obj), "Diproses")
 
 
 @router.post("/submissions/{submission_id}/reject", response_model=Envelope[SubmissionRead])
@@ -111,7 +178,7 @@ async def reject_submission(
     """Reject a submission with a mandatory reason (terminal)."""
     user = await _load_user(session, current)
     obj = await SubmissionService(session).reject(submission_id, user, body.reason)
-    return success_response(SubmissionRead.model_validate(obj).model_dump(mode="json"), "Ditolak")
+    return success_response(await _submission_read(session, obj), "Ditolak")
 
 
 @router.get("/submissions/{submission_id}/history", response_model=Envelope[list[SubmissionStatusHistoryRead]])

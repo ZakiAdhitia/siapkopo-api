@@ -4,16 +4,37 @@ Each entry's ``fields`` list holds tuples:
 (field_key, label, field_type, options, placeholder, is_required, validation_rules)
 """
 
+# Conditional Sub-Category Form for KK (Bagian 4.2, STRATEGI doc /
+# SYARAT-PENGAJUAN-SURAT.md Bagian A): required documents vary by permohonan
+# category. Simplified to each category's 2 most universally-applicable
+# documents rather than the full nested conditionals in the source doc
+# (e.g. "KK Baru" also lists items that only apply if already married / came
+# from abroad) -- deliberately scoped down for this iteration.
+KK_CATEGORY_DOCS: dict[str, list[str]] = {
+    "KK Baru": ["Formulir Permohonan KK", "Kartu Keluarga Lama"],
+    "Penambahan Anggota (Kelahiran)": ["Kartu Keluarga Lama (Asli)", "Surat Keterangan Kelahiran"],
+    "Penambahan Anggota (Menumpang)": [
+        "Kartu Keluarga Lama (Asli)", "Surat Keterangan Pindah/Pindah Datang",
+    ],
+    "Pengurangan Anggota": ["Kartu Keluarga Lama (Asli)", "Surat Keterangan Kematian atau Pindah"],
+    "KK Hilang/Rusak": [
+        "Kartu Keluarga Lama (Asli/Fotocopy)", "Fotocopy Akta Kelahiran atau Ijazah",
+    ],
+}
+
 SURAT_TEMPLATES: list[dict] = [
     {
         "code": "kk", "name": "Kartu Keluarga", "icon": "family_restroom",
         "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "description": "Usulan cetak / perubahan KK",
-        "required_documents": ["KK lama", "KTP kepala keluarga"],
+        "required_documents": KK_CATEGORY_DOCS["KK Baru"],
+        "category_field_key": "status_perubahan",
+        "required_documents_by_category": KK_CATEGORY_DOCS,
         "numbering_prefix": "474",
+        "output_category": "dukcapil_pengantar",
         "fields": [
             ("status_perubahan", "Status Perubahan", "select",
-             ["Cetak baru", "Perubahan data", "KK hilang"], None, True, None),
+             list(KK_CATEGORY_DOCS.keys()), None, True, None),
             ("jumlah_anggota_keluarga", "Jumlah Anggota Keluarga", "number",
              None, "mis. 4", True, None),
             ("keterangan_perubahan", "Keterangan Perubahan", "text",
@@ -37,6 +58,9 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Keterangan tempat tinggal",
         "required_documents": ["KTP", "KK"],
         "numbering_prefix": "470",
+        "output_category": "desa_direct",
+        # Only KK is enabled during this development phase (client request).
+        "is_active": False,
         "fields": [
             ("alamat_tinggal_saat_ini", "Alamat Tinggal Saat Ini", "text",
              None, "Dusun / RT / RW", True, None),
@@ -60,6 +84,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Surat keterangan usaha",
         "required_documents": ["KTP", "KK", "Foto tempat usaha"],
         "numbering_prefix": "503",
+        "output_category": "desa_direct",
+        "is_active": False,
         "fields": [
             ("jenis_usaha", "Jenis Usaha", "text", None, "mis. warung sembako", True, None),
             ("alamat_usaha", "Alamat Usaha", "text", None, "lokasi usaha", True, None),
@@ -82,6 +108,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "SKTM untuk bantuan",
         "required_documents": ["KTP", "KK", "Surat pengantar RT/RW"],
         "numbering_prefix": "460",
+        "output_category": "desa_direct",
+        "is_active": False,
         "fields": [
             ("keperluan", "Keperluan", "select",
              ["Beasiswa", "Kesehatan", "Bansos"], None, True, None),
@@ -108,6 +136,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Surat keterangan lahir",
         "required_documents": ["KK", "KTP orang tua", "Surat bidan/RS"],
         "numbering_prefix": "471",
+        "output_category": "dukcapil_pengantar",
+        "is_active": False,
         "fields": [
             ("nama_bayi", "Nama Bayi", "text", None, "nama lengkap bayi", True, None),
             ("tanggal_tempat_lahir", "Tanggal & Tempat Lahir", "text",
@@ -131,6 +161,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Surat keterangan kematian",
         "required_documents": ["KK", "KTP almarhum", "Surat RS (bila ada)"],
         "numbering_prefix": "472",
+        "output_category": "dukcapil_pengantar",
+        "is_active": False,
         "fields": [
             ("nama_almarhum", "Nama Almarhum/ah", "text", None, "nama lengkap", True, None),
             ("tanggal_tempat_wafat", "Tanggal & Tempat Wafat", "text",
@@ -155,6 +187,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Pindah domisili keluar",
         "required_documents": ["KK", "KTP semua anggota"],
         "numbering_prefix": "475",
+        "output_category": "dukcapil_pengantar",
+        "is_active": False,
         "fields": [
             ("alamat_tujuan", "Alamat Tujuan", "text", None, "alamat baru lengkap", True, None),
             ("alasan_pindah", "Alasan Pindah", "text", None, "mis. pekerjaan", True, None),
@@ -176,6 +210,8 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Kedatangan penduduk baru",
         "required_documents": ["Surat pindah desa asal", "KTP", "KK"],
         "numbering_prefix": "476",
+        "output_category": "desa_direct",
+        "is_active": False,
         "fields": [
             ("asal_domisili_sebelumnya", "Asal Domisili Sebelumnya", "text",
              None, "alamat asal", True, None),

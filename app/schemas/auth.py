@@ -2,7 +2,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _validate_email_format(value: str) -> str:
@@ -26,8 +26,11 @@ class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=6)
     email: str
-    position_choice: Literal["staff", "rt", "rw", "warga"]
-    nik: str | None = Field(default=None, min_length=8, max_length=20)
+    # "warga" (plain citizen) is intentionally not a registrable position --
+    # citizens use the guest submission flow instead of an account (Bagian 6,
+    # STRATEGI doc rev. 2026-07-26).
+    position_choice: Literal["staff", "rt", "rw"]
+    nik: str | None = Field(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$")
     rt_id: UUID | None = None
     rw_id: UUID | None = None
 
@@ -85,9 +88,31 @@ class TokenData(BaseModel):
     expires_in: int
 
 
+class RoleRead(BaseModel):
+    """Read-only listing of the fixed Role catalog -- like Position, Role has
+    no create/update/delete API by design; the approval-step config screen
+    needs this to show/pick roles by name instead of raw ids."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    display_name: str
+
+
 class MeData(BaseModel):
     """Current authenticated identity."""
 
     id: str
     role: str
     permissions: list[str]
+    username: str | None = None
+    full_name: str
+    email: str | None = None
+    phone: str | None = None
+    position_name: str | None = None
+    # Needed by the Lapduk screen: RT users default-select their own RT, RW
+    # users see the RTs under their own RW (they lack rt:manage/rw:manage,
+    # so they can't call GET /rt themselves to discover this).
+    rt_id: UUID | None = None
+    rw_id: UUID | None = None

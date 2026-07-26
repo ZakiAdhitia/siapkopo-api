@@ -5,7 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.models.auth import Permission, Position, Role, User
-from app.models.letter_template import FieldType, LetterTemplate, TemplateField
+from app.models.letter_template import (
+    FieldType,
+    LetterOutputCategory,
+    LetterTemplate,
+    TemplateField,
+)
 from app.models.master import RT, RW, Dusun, Resident, VillageProfile
 from app.models.submission import ApprovalStepConfig
 from app.permissions.registry import (
@@ -198,11 +203,14 @@ async def seed_letter_templates(session: AsyncSession) -> None:
             icon=entry["icon"],
             color_bg=entry["color_bg"],
             color_fg=entry["color_fg"],
-            is_active=True,
+            is_active=entry.get("is_active", True),
             required_documents=entry["required_documents"],
             numbering_prefix=entry["numbering_prefix"],
             numbering_pattern="{prefix}/{seq}/Ds.Kopo/{year}",
             pdf_body_template=entry["pdf_body_template"],
+            output_category=LetterOutputCategory(entry["output_category"]),
+            category_field_key=entry.get("category_field_key"),
+            required_documents_by_category=entry.get("required_documents_by_category"),
         )
         session.add(template)
         await session.flush()

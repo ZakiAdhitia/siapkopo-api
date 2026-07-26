@@ -1,4 +1,6 @@
 """Authentication endpoints."""
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,8 +82,16 @@ async def logout(
 
 
 @router.get("/me", response_model=Envelope[MeData])
-async def me(user: CurrentUser = Depends(require_permission("auth:me"))) -> dict:
-    """Return the current identity and permissions."""
-    return success_response(
-        {"id": user.id, "role": user.role, "permissions": user.permissions}
-    )
+async def me(
+    user: CurrentUser = Depends(require_permission("auth:me")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the current identity, permissions, and profile basics."""
+    record = await AuthService(session).users.get_by_id(UUID(user.id))
+    return success_response({
+        "id": user.id, "role": user.role, "permissions": user.permissions,
+        "username": record.username, "full_name": record.full_name, "email": record.email,
+        "phone": record.phone,
+        "position_name": record.position.display_name if record.position else None,
+        "rt_id": record.rt_id, "rw_id": record.rw_id,
+    })

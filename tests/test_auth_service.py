@@ -164,8 +164,11 @@ async def test_seed_rbac_corrects_stale_role_on_reseed(seeded_session):
 
 
 @pytest.mark.asyncio
-async def test_register_warga_matches_resident_is_active(seeded_session):
-    """Registering as warga with a NIK that matches a seeded Resident activates immediately.
+async def test_register_rt_matches_resident_is_pending(seeded_session):
+    """Registering as rt with a NIK that matches a seeded Resident still
+    requires approval -- plain "warga" self-registration doesn't exist
+    anymore (Bagian 6, STRATEGI doc rev. 2026-07-26), so EVERY position_choice
+    (staff/rt/rw) is created pending, never immediately active.
 
     Uses Ahmad Fauzi's resident NIK (seed suffix "0011" -> "3516" +
     "0011".zfill(12) -> "3516000000000011", per seed_master's nik formula).
@@ -175,32 +178,38 @@ async def test_register_warga_matches_resident_is_active(seeded_session):
     seed_link_demo_resident, which would make this a ConflictError case
     instead of the success case this test wants).
     """
+    from sqlalchemy import select as _select
+
+    from app.models.master import Resident
     from app.seed.seed import seed_master
     await seed_master(seeded_session)
+    resident = await seeded_session.scalar(
+        _select(Resident).where(Resident.nik == "3516000000000011")
+    )
     svc = AuthService(seeded_session)
     user, is_active = await svc.register({
         "full_name": "Ahmad Fauzi Baru", "username": "ahmadfauzi2",
         "password": "password123", "email": "ahmadfauzi2@example.test",
-        "position_choice": "warga", "nik": "3516000000000011",
-        "rt_id": None, "rw_id": None,
+        "position_choice": "rt", "nik": "3516000000000011",
+        "rt_id": resident.rt_id, "rw_id": None,
     })
-    assert is_active is True
-    assert user.is_active is True
-    assert user.pending_approval is False
+    assert is_active is False
+    assert user.is_active is False
+    assert user.pending_approval is True
     assert user.resident_id is not None
     assert user.role.name == "warga"
-    assert user.position.slug == "warga_desa"
+    assert user.position.slug == "rt"
 
 
 @pytest.mark.asyncio
-async def test_register_warga_unknown_nik_rejected(seeded_session):
+async def test_register_rt_unknown_nik_rejected(seeded_session):
     from app.core.exceptions import ValidationAppError
     svc = AuthService(seeded_session)
     with pytest.raises(ValidationAppError):
         await svc.register({
             "full_name": "Orang Asing", "username": "orangasing",
             "password": "password123", "email": "asing@example.test",
-            "position_choice": "warga", "nik": "9999999999999999",
+            "position_choice": "rt", "nik": "9999999999999999",
             "rt_id": None, "rw_id": None,
         })
 

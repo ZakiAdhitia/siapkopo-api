@@ -25,6 +25,21 @@ async def _user_by_username(db_session, username: str) -> User:
 
 
 @pytest.mark.asyncio
+async def test_list_positions_returns_seeded_catalog(client):
+    resp = await client.get("/api/v1/positions", headers=await _headers(client, "kades", "kades123"))
+    assert resp.status_code == 200
+    slugs = [p["slug"] for p in resp.json()["data"]]
+    assert "kepala_desa" in slugs
+    assert "warga_desa" in slugs
+
+
+@pytest.mark.asyncio
+async def test_list_positions_requires_user_manage_permission(client):
+    resp = await client.get("/api/v1/positions", headers=await _headers(client, "staf", "staf123"))
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_create_user_by_kades_succeeds(client, db_session):
     """kades (level 1) may create a bendahara_desa (level 3) account -- role
     is derived from the position via POSITION_ROLE_MAP."""

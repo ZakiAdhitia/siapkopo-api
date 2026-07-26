@@ -25,7 +25,7 @@ def _wb(rows):
 async def test_import_residents(db_session):
     data = _wb(
         [
-            ["3201", "Budi", "L", "Bogor", "1990-01-01", "Petani", "0812", "Jl A"],
+            ["3201000000000001", "Budi", "L", "Bogor", "1990-01-01", "Petani", "0812", "Jl A"],
             ["", "Invalid", "L", "", "", "", "", ""],
         ]
     )
@@ -47,9 +47,9 @@ async def test_import_duplicate_nik_isolated_by_savepoint(db_session):
     """
     data = _wb(
         [
-            ["3301", "Warga Pertama", "L", "Bogor", "1990-01-01", "Petani", "0812", "Jl A"],
-            ["3301", "Warga Duplikat", "L", "Bogor", "1991-01-01", "Guru", "0813", "Jl B"],
-            ["3302", "Warga Ketiga", "P", "Bogor", "1992-01-01", "Guru", "0814", "Jl C"],
+            ["3301000000000001", "Warga Pertama", "L", "Bogor", "1990-01-01", "Petani", "0812", "Jl A"],
+            ["3301000000000001", "Warga Duplikat", "L", "Bogor", "1991-01-01", "Guru", "0813", "Jl B"],
+            ["3301000000000002", "Warga Ketiga", "P", "Bogor", "1992-01-01", "Guru", "0814", "Jl C"],
         ]
     )
     result = await ResidentExcelService(db_session).import_bytes(data)
@@ -60,7 +60,7 @@ async def test_import_duplicate_nik_isolated_by_savepoint(db_session):
 
     residents, total = await ResidentService(db_session).list(page=1, size=100)
     assert total == 2
-    assert {r.nik for r in residents} == {"3301", "3302"}
+    assert {r.nik for r in residents} == {"3301000000000001", "3301000000000002"}
 
 
 @pytest.mark.asyncio
@@ -71,14 +71,14 @@ async def test_export_residents(db_session):
 
 @pytest.mark.asyncio
 async def test_export_residents_contains_imported_rows(db_session):
-    data = _wb([["3202", "Ani", "P", "Bogor", "1991-02-02", "Guru", "0813", "Jl B"]])
+    data = _wb([["3202000000000001", "Ani", "P", "Bogor", "1991-02-02", "Guru", "0813", "Jl B"]])
     await ResidentExcelService(db_session).import_bytes(data)
     out = await ResidentExcelService(db_session).export_bytes()
     wb = openpyxl.load_workbook(io.BytesIO(out))
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     assert rows[0][0] == "nik"
-    assert any(r[0] == "3202" and r[1] == "Ani" for r in rows[1:])
+    assert any(r[0] == "3202000000000001" and r[1] == "Ani" for r in rows[1:])
 
 
 async def _token(client, identifier="operator", password="operator123"):
@@ -91,7 +91,7 @@ async def test_import_export_endpoints(client):
     tok = await _token(client)
     h = {"Authorization": f"Bearer {tok}"}
 
-    data = _wb([["9001", "Warga Satu", "L", "Bogor", "1985-05-05", "Petani", "0811", "Jl C"]])
+    data = _wb([["9001000000000001", "Warga Satu", "L", "Bogor", "1985-05-05", "Petani", "0811", "Jl C"]])
     files = {"file": ("residents.xlsx", data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
     resp = await client.post("/api/v1/residents/import", files=files, headers=h)
     assert resp.status_code == 200

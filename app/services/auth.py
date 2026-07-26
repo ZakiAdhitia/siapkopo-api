@@ -37,7 +37,6 @@ class AuthService:
     """Business logic for authentication and token lifecycle."""
 
     _POSITION_CHOICE_MAP: dict[str, tuple[str, str]] = {
-        "warga": ("warga", "warga_desa"),
         "rt": ("warga", "rt"),
         "rw": ("warga", "rw"),
         "staff": ("staff", "staff_desa"),
@@ -131,11 +130,12 @@ class AuthService:
     async def register(self, data: dict) -> tuple[User, bool]:
         """Self-register a new account. Returns (user, is_immediately_active).
 
-        warga/rt/rw require a nik matching an existing Resident (identity
-        check against master data); staff's nik is optional and unchecked.
-        warga is active immediately; staff/rt/rw are created pending
-        approval (is_active=False) -- approving them is a later rework
-        part's (Part 5) responsibility, not this method's.
+        rt/rw require a nik matching an existing Resident (identity check
+        against master data); staff's nik is optional and unchecked. Every
+        remaining position_choice (staff/rt/rw) is created pending approval
+        (is_active=False) -- plain "warga" registration doesn't exist
+        anymore (Bagian 6, STRATEGI doc rev. 2026-07-26), so there is no
+        immediately-active self-registration path left.
         """
         position_choice = data["position_choice"]
         role_name, position_slug = self._POSITION_CHOICE_MAP[position_choice]
@@ -150,7 +150,7 @@ class AuthService:
 
         resident_id = None
         nik = data.get("nik")
-        if position_choice in ("warga", "rt", "rw"):
+        if position_choice in ("rt", "rw"):
             if not nik:
                 raise ValidationAppError("NIK wajib diisi untuk pendaftaran ini")
             resident = await self.session.scalar(
@@ -189,7 +189,7 @@ class AuthService:
         role = await self.session.scalar(select(Role).where(Role.name == role_name))
         position = await self.session.scalar(select(Position).where(Position.slug == position_slug))
 
-        is_active = position_choice == "warga"
+        is_active = False
         user = User(
             username=data["username"].strip().lower(), nik=nik, full_name=full_name,
             hashed_password=hash_password(data["password"]), email=data["email"],

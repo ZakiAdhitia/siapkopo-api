@@ -31,6 +31,7 @@ from app.schemas.master import (
     VillageProfileRead,
     VillageProfileUpdate,
 )
+from app.models.master import RT, RW, Dusun, FamilyCard
 from app.services.excel import ResidentExcelService
 from app.services.master import (
     DusunService,
@@ -42,6 +43,28 @@ from app.services.master import (
 )
 
 router = APIRouter(tags=["master-data"])
+
+
+async def _resident_read(session: AsyncSession, obj) -> dict:
+    """Build a ResidentRead dict enriched with denormalized kk/rt/rw/dusun
+    display fields (see ResidentRead's docstring for why this lives here
+    instead of requiring rt:manage/rw:manage/family_card:manage)."""
+    data = ResidentRead.model_validate(obj).model_dump(mode="json")
+    if obj.family_card_id is not None:
+        fc = await session.get(FamilyCard, obj.family_card_id)
+        if fc is not None:
+            data["kk_number"] = fc.kk_number
+    if obj.rt_id is not None:
+        rt = await session.get(RT, obj.rt_id)
+        if rt is not None:
+            data["rt_number"] = rt.number
+            rw = await session.get(RW, rt.rw_id)
+            if rw is not None:
+                data["rw_number"] = rw.number
+                dusun = await session.get(Dusun, rw.dusun_id)
+                if dusun is not None:
+                    data["dusun_name"] = dusun.name
+    return data
 
 
 # ---- Village Profile (singleton) ----
@@ -303,7 +326,7 @@ async def create_resident(
 ) -> dict:
     """Create a new resident."""
     obj = await ResidentService(session).create(body.model_dump(exclude_unset=True))
-    return success_response(ResidentRead.model_validate(obj).model_dump(mode="json"), "Tersimpan")
+    return success_response(await _resident_read(session, obj), "Tersimpan")
 
 
 @router.get("/residents", response_model=Envelope[Page[ResidentRead]])
@@ -320,7 +343,10 @@ async def list_residents(
     items, total = await ResidentService(session).list(
         p.page, p.size, filters=filters, search=search
     )
-    return success_response(build_page(items, total, p.page, p.size, ResidentRead))
+    return success_response({
+        "items": [await _resident_read(session, i) for i in items],
+        "total": total, "page": p.page, "size": p.size,
+    })
 
 
 @router.post("/residents/import", response_model=Envelope[ResidentImportResult])
@@ -357,7 +383,7 @@ async def get_resident(
 ) -> dict:
     """Get a single resident by id."""
     obj = await ResidentService(session).get_or_404(item_id)
-    return success_response(ResidentRead.model_validate(obj).model_dump(mode="json"))
+    return success_response(await _resident_read(session, obj))
 
 
 @router.put("/residents/{item_id}", response_model=Envelope[ResidentRead])
@@ -369,7 +395,7 @@ async def update_resident(
 ) -> dict:
     """Update a resident."""
     obj = await ResidentService(session).update(item_id, body.model_dump(exclude_unset=True))
-    return success_response(ResidentRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
+    return success_response(await _resident_read(session, obj), "Diperbarui")
 
 
 @router.delete("/residents/{item_id}", response_model=Envelope[None])

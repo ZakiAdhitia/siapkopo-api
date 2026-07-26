@@ -43,6 +43,29 @@ class LapdukService:
         stmt = select(RT.id).where(RT.rw_id == rw_id, RT.deleted_at.is_(None))
         return list((await self.session.scalars(stmt)).all())
 
+    async def list_visible_rts(self, actor: User, actor_permissions: list[str]) -> list[RT]:
+        """RTs the caller may fill in a LAPDUK report for.
+
+        RT/RW position holders have no rt:manage/rw:manage (that's admin-only
+        master-data CRUD), so they can't call GET /rt themselves to discover
+        which RT(s) to fill in for -- this mirrors the same read/write scope
+        as list()/upsert() above, just returning RT rows instead of reports.
+        """
+        stmt = select(RT).where(RT.deleted_at.is_(None))
+        if "*" in actor_permissions or "lapduk:read_all" in actor_permissions:
+            pass
+        elif "lapduk:read_rw" in actor_permissions:
+            if actor.rw_id is None:
+                raise ForbiddenError("Akun Anda tidak terhubung ke RW manapun")
+            stmt = stmt.where(RT.rw_id == actor.rw_id)
+        elif "lapduk:manage_own" in actor_permissions:
+            if actor.rt_id is None:
+                raise ForbiddenError("Akun Anda tidak terhubung ke RT manapun")
+            stmt = stmt.where(RT.id == actor.rt_id)
+        else:
+            raise ForbiddenError("Anda tidak memiliki akses LAPDUK")
+        return list((await self.session.scalars(stmt.order_by(RT.number))).all())
+
     async def _authorize_write(
         self, actor: User, actor_permissions: list[str], rt_id: uuid.UUID
     ) -> None:
