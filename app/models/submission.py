@@ -72,6 +72,21 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # anywhere in this system; notifications still only go out by email.
     guest_contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_contact_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Raw applicant identity for a guest submission whose NIK had no existing
+    # Resident row at submit time (Bagian 5, Master Data rework: master data
+    # must NOT be written until this submission is approved). Null once
+    # applicant_resident_id is set -- either the NIK already existed at
+    # submit time, or the Resident was created from these fields at approval.
+    pending_applicant_nik: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pending_applicant_nama: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    pending_applicant_alamat: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Staff-entered from the submission detail page, before/at approval --
+    # the "informasi nomor KK dll" that triggers the actual master-data
+    # insert at issuance time (see SubmissionService._issue).
+    pending_applicant_no_kk: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pending_applicant_rt_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("rt.id"), nullable=True
+    )
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     physical_documents_promised: Mapped[bool] = mapped_column(default=False)
     status: Mapped[SubmissionStatus] = mapped_column(

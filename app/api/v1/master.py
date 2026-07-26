@@ -31,7 +31,7 @@ from app.schemas.master import (
     VillageProfileRead,
     VillageProfileUpdate,
 )
-from app.models.master import RT, RW, Dusun, FamilyCard
+from app.models.master import RT, RW, FamilyCard
 from app.services.excel import ResidentExcelService
 from app.services.master import (
     DusunService,
@@ -46,7 +46,7 @@ router = APIRouter(tags=["master-data"])
 
 
 async def _resident_read(session: AsyncSession, obj) -> dict:
-    """Build a ResidentRead dict enriched with denormalized kk/rt/rw/dusun
+    """Build a ResidentRead dict enriched with denormalized kk/rt/rw
     display fields (see ResidentRead's docstring for why this lives here
     instead of requiring rt:manage/rw:manage/family_card:manage)."""
     data = ResidentRead.model_validate(obj).model_dump(mode="json")
@@ -61,9 +61,6 @@ async def _resident_read(session: AsyncSession, obj) -> dict:
             rw = await session.get(RW, rt.rw_id)
             if rw is not None:
                 data["rw_number"] = rw.number
-                dusun = await session.get(Dusun, rw.dusun_id)
-                if dusun is not None:
-                    data["dusun_name"] = dusun.name
     return data
 
 

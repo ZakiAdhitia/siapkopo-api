@@ -28,6 +28,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
               "lapduk:read_all", "lapduk:export", "lapduk:import", "notification:read",
               "dashboard:read"],
     "admin": ["auth:me", "resident:read", "resident:update",
+              "resident:import", "resident:export",
               "village:manage", "dusun:manage", "rw:manage", "rt:manage", "family_card:manage",
               "template:manage", "template:read",
               "submission:read", "submission:read_all", "submission:approve",

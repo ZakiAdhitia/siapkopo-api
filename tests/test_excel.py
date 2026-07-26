@@ -108,8 +108,8 @@ async def test_import_export_endpoints(client):
 
 @pytest.mark.asyncio
 async def test_import_requires_permission(client):
-    # kades lacks resident:import
-    tok = await _token(client, "kades", "kades123")
+    # warga lacks resident:import (kades/sekdes -- role admin -- have it, see registry.py)
+    tok = await _token(client, "warga", "warga123")
     h = {"Authorization": f"Bearer {tok}"}
     data = _wb([])
     files = {"file": ("residents.xlsx", data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}

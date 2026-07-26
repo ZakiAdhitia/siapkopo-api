@@ -62,6 +62,24 @@ class SubmissionApproveRequest(BaseModel):
     note: str | None = None
 
 
+class ApplicantDataCompleteRequest(BaseModel):
+    """Staff-supplied master-data completion for a guest submission whose NIK
+    wasn't already on file (Bagian 5, Master Data rework) -- entered from the
+    submission detail page, applied to residents/family_cards on approval."""
+
+    no_kk: str | None = Field(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$")
+    rt_id: UUID | None = None
+
+
+class SubmissionAttachmentRead(_Read):
+    submission_id: UUID
+    document_label: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+
+
 class SubmissionRead(_Read):
     template_id: UUID
     submitted_by_user_id: UUID | None = None
@@ -75,6 +93,16 @@ class SubmissionRead(_Read):
     rejected_at: datetime | None = None
     issued_at: datetime | None = None
     created_at: datetime
+    # Guest-only contact info (Bagian 3.2/8, STRATEGI doc) -- shown on the
+    # staff detail page so a reviewer can reach the applicant directly.
+    guest_contact_email: str | None = None
+    guest_contact_whatsapp: str | None = None
+    # Set by staff from the detail page (see complete_applicant_data) for a
+    # guest submission whose NIK wasn't already in master data -- used to
+    # actually create the Resident/FamilyCard rows once this submission is
+    # approved (see SubmissionService._issue).
+    pending_applicant_no_kk: str | None = None
+    pending_applicant_rt_id: UUID | None = None
     # Populated by the router (not the ORM object) from resolve_applicant_data
     # -- staff/admin reviewing a submission need to see who it's for and
     # verify their identity (nik/alamat) before approving.
@@ -82,21 +110,22 @@ class SubmissionRead(_Read):
     applicant_nik: str | None = None
     applicant_alamat: str | None = None
     applicant_no_kk: str | None = None
+    # Populated by the router: whether this submission's applicant is
+    # already linked to a Resident row (master data). False means the
+    # applicant-data/KK completion step is still pending for this NIK.
+    applicant_in_master_data: bool = False
+    # Populated by the router from SubmissionAttachment rows.
+    attachments: list[SubmissionAttachmentRead] = []
 
 
 class SubmissionStatusHistoryRead(_Read):
     step_index: int | None = None
     action: HistoryAction
     actor_user_id: UUID | None = None
+    # Populated by the router: the acting user's username, so staff/guest
+    # tracking can show "disetujui oleh <username>" instead of a raw UUID.
+    actor_username: str | None = None
     note: str | None = None
-    created_at: datetime
-
-
-class SubmissionAttachmentRead(_Read):
-    document_label: str
-    original_filename: str
-    content_type: str
-    size_bytes: int
     created_at: datetime
 
 

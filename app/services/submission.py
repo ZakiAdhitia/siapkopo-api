@@ -24,7 +24,7 @@ from app.repositories.base import BaseRepository
 from app.services.approval_config import ApprovalStepConfigService
 from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
-from app.services.master import ResidentService, VillageProfileService
+from app.services.master import FamilyCardService, ResidentService, VillageProfileService
 from app.services.notification import NotificationService
 from app.services.template_render import TemplateRenderService
 
@@ -123,15 +123,24 @@ class SubmissionService:
         a logged-in user's own submission, a guest submission, or a Mode
         Loket walk-in (where submitted_by_user_id is the STAFF, not the
         applicant). applicant_resident_id -- who the letter is actually
-        for -- always takes priority when set; only a normal logged-in
-        warga submission (no applicant_resident_id at all) falls back to
-        resolving the applicant from the submitting user.
+        for -- always takes priority when set; a guest submission whose NIK
+        wasn't in master data yet falls back to its own pending_applicant_*
+        fields (Bagian 5, Master Data rework); only a normal logged-in
+        warga submission (neither of the above) falls back to resolving the
+        applicant from the submitting user.
         """
         if submission.applicant_resident_id is not None:
             resident = await self.session.get(Resident, submission.applicant_resident_id)
             if resident is None:
                 return {"nama": "-", "nik": "-", "alamat": "-", "no_kk": "-"}
             return await self._applicant_data_from_resident(resident)
+        if submission.pending_applicant_nik is not None:
+            return {
+                "nama": submission.pending_applicant_nama or "-",
+                "nik": submission.pending_applicant_nik,
+                "alamat": submission.pending_applicant_alamat or "-",
+                "no_kk": submission.pending_applicant_no_kk or "-",
+            }
         if submission.submitted_by_user_id is not None:
             user = await self.session.get(User, submission.submitted_by_user_id)
             return await self.resolve_applicant_data(user)
@@ -195,8 +204,11 @@ class SubmissionService:
     ) -> Resident:
         """Look up a Resident by NIK, auto-creating a minimal row if none
         exists yet -- the "every transaction enriches the population master
-        data" pattern shared by the guest flow and Mode Loket (Bagian 3, 5.1
-        STRATEGI doc).
+        data" pattern Mode Loket uses (Bagian 3.1 STRATEGI doc). Staff has
+        already verified the physical KTP/KK in person for a walk-in, so an
+        immediate insert is safe -- unlike the guest flow (Bagian 5, Master
+        Data rework), which defers this to approval instead; see
+        `_lookup_resident_by_nik`.
         """
         resident = await self.session.scalar(
             select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
@@ -209,6 +221,12 @@ class SubmissionService:
             })
         return resident
 
+    async def _lookup_resident_by_nik(self, nik: str) -> Resident | None:
+        """Read-only NIK lookup -- never writes to master data."""
+        return await self.session.scalar(
+            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
+        )
+
     async def create_guest(
         self, template_id: uuid.UUID, nik: str, answers: dict[str, Any], contact_email: str,
         attachments: list[tuple[str, str, bytes, str]],
@@ -217,9 +235,15 @@ class SubmissionService:
     ) -> Submission:
         """Create a submission with no account (Bagian 3.2, STRATEGI doc).
 
-        Resolves the applicant by NIK, auto-creating a minimal Resident row
-        if none exists yet -- the same "every transaction enriches the
-        population master data" pattern Mode Loket uses.
+        Looks up the applicant by NIK, but -- unlike Mode Loket -- never
+        writes to master data at this point (Bagian 5, Master Data rework):
+        a NIK already on file is linked via applicant_resident_id, but an
+        unknown NIK is only stored as raw pending_applicant_* fields on the
+        submission itself. The actual Resident row (if needed) is only
+        created once staff has reviewed and approved the submission (see
+        `complete_applicant_data` and `_issue`), preventing unverified guest
+        input from polluting the population master data before anyone at
+        the village has checked it.
 
         `attachments` is `[(document_label, filename, content, content_type), ...]`
         -- exactly one file per template.required_documents entry is
@@ -246,11 +270,17 @@ class SubmissionService:
             storage.validate_upload(content, content_type)
             storage.check_not_blurry(content, content_type, label)
 
-        resident = await self._resolve_or_create_resident(nik, applicant_nama, applicant_alamat)
+        resident = await self._lookup_resident_by_nik(nik)
+        if resident is None and not applicant_nama:
+            raise ValidationAppError("NIK belum terdaftar, mohon isi nama lengkap pemohon")
 
         obj = Submission(
             template_id=template_id,
-            submitted_by_user_id=None, applicant_resident_id=resident.id,
+            submitted_by_user_id=None,
+            applicant_resident_id=resident.id if resident else None,
+            pending_applicant_nik=None if resident else nik,
+            pending_applicant_nama=None if resident else applicant_nama,
+            pending_applicant_alamat=None if resident else applicant_alamat,
             guest_contact_email=contact_email, guest_contact_whatsapp=contact_whatsapp,
             answers=answers,
             physical_documents_promised=False,
@@ -272,7 +302,7 @@ class SubmissionService:
         await self.session.commit()
         logger.info(
             "Guest submission created id=%s template_id=%s resident_id=%s attachments=%d",
-            obj.id, template_id, resident.id, len(attachments),
+            obj.id, template_id, resident.id if resident else None, len(attachments),
         )
         NotificationService(self.session).provider.send_email(
             contact_email, "Pengajuan Surat Diterima",
@@ -318,6 +348,26 @@ class SubmissionService:
         )
         return obj
 
+    async def complete_applicant_data(
+        self, submission_id: uuid.UUID, no_kk: str | None, rt_id: uuid.UUID | None,
+    ) -> Submission:
+        """Staff fills in the master-data fields (Bagian 5, Master Data
+        rework) a guest didn't provide -- No. KK and/or RT -- from the
+        submission detail page. Only stored on the submission for now; the
+        actual Resident/FamilyCard rows are created at approval (`_issue`),
+        not here.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.applicant_resident_id is not None:
+            raise ValidationAppError("Pemohon pengajuan ini sudah tercatat di master data")
+        if obj.pending_applicant_nik is None:
+            raise ValidationAppError("Pengajuan ini tidak memerlukan pelengkapan data pemohon")
+        obj.pending_applicant_no_kk = no_kk
+        obj.pending_applicant_rt_id = rt_id
+        await self.session.commit()
+        logger.info("Applicant data completed submission_id=%s", submission_id)
+        return obj
+
     async def search_guest_submissions(
         self, nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
     ) -> list[Submission]:
@@ -346,39 +396,6 @@ class SubmissionService:
             .order_by(Submission.created_at.desc())
         )
         return list((await self.session.scalars(stmt)).all())
-
-    async def get_guest_submission_or_404(
-        self, submission_id: uuid.UUID,
-        nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
-    ) -> Submission:
-        """Resolve one specific guest/walk-in submission (e.g. for PDF
-        download): the submission id plus at least one matching identifier.
-        """
-        obj = await self.get_or_404(submission_id)
-        if obj.applicant_resident_id is None:
-            raise NotFoundError("Pengajuan tidak ditemukan")
-        matched = False
-        if nik:
-            resident = await self.session.get(Resident, obj.applicant_resident_id)
-            matched = matched or (resident is not None and resident.nik == nik)
-        if whatsapp:
-            matched = matched or obj.guest_contact_whatsapp == whatsapp
-        if email:
-            matched = matched or obj.guest_contact_email == email
-        if not matched:
-            raise NotFoundError("Pengajuan tidak ditemukan")
-        return obj
-
-    async def download_pdf_guest(
-        self, submission_id: uuid.UUID,
-        nik: str | None = None, whatsapp: str | None = None, email: str | None = None,
-    ) -> bytes:
-        """Like download_pdf, but for a guest resolving their own submission
-        by id + a matching identifier instead of an authenticated session."""
-        obj = await self.get_guest_submission_or_404(submission_id, nik, whatsapp, email)
-        if obj.status != SubmissionStatus.ISSUED or obj.pdf_storage_path is None:
-            raise ValidationAppError("Surat belum terbit")
-        return await FileStorageService().read(obj.pdf_storage_path)
 
     async def get_or_404(self, id_: uuid.UUID) -> Submission:
         """Return the submission with the given id, or raise NotFoundError."""
@@ -438,6 +455,37 @@ class SubmissionService:
         logger.info("Attachment added submission_id=%s label=%s", submission_id, document_label)
         return attachment
 
+    async def list_attachments(self, submission_id: uuid.UUID) -> list[SubmissionAttachment]:
+        """Return a submission's uploaded supporting documents."""
+        stmt = (
+            select(SubmissionAttachment)
+            .where(
+                SubmissionAttachment.submission_id == submission_id,
+                SubmissionAttachment.deleted_at.is_(None),
+            )
+            .order_by(SubmissionAttachment.created_at)
+        )
+        return list((await self.session.scalars(stmt)).all())
+
+    async def get_attachment_file(
+        self, submission_id: uuid.UUID, attachment_id: uuid.UUID,
+        actor_user_id: uuid.UUID, actor_permissions: list[str],
+    ) -> tuple[bytes, SubmissionAttachment]:
+        """Return an attachment's file bytes, enforcing the same ownership/
+        read_all scope as the submission it belongs to."""
+        await self.get_scoped(submission_id, actor_user_id, actor_permissions)
+        attachment = await self.session.scalar(
+            select(SubmissionAttachment).where(
+                SubmissionAttachment.id == attachment_id,
+                SubmissionAttachment.submission_id == submission_id,
+                SubmissionAttachment.deleted_at.is_(None),
+            )
+        )
+        if attachment is None:
+            raise NotFoundError("Lampiran tidak ditemukan")
+        content = await FileStorageService().read(attachment.storage_path)
+        return content, attachment
+
     async def list_history(self, submission_id: uuid.UUID) -> list[SubmissionStatusHistory]:
         """Return a submission's status history, oldest first."""
         await self.get_or_404(submission_id)
@@ -448,8 +496,48 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
+    async def _materialize_pending_resident(self, submission: Submission) -> None:
+        """Write a guest submission's applicant to master data for the
+        first time, now that it has been approved (Bagian 5, Master Data
+        rework). No-op if the applicant was already linked (NIK existed at
+        submit time, or this isn't a guest submission at all).
+
+        A No. KK from `complete_applicant_data` resolves/creates the
+        matching FamilyCard; RT is optional. Neither is required -- staff
+        may approve before finishing that step, and the Resident is still
+        created (just without a family_card_id/rt_id yet).
+        """
+        if submission.applicant_resident_id is not None or submission.pending_applicant_nik is None:
+            return
+        family_card_id = None
+        if submission.pending_applicant_no_kk:
+            fc = await self.session.scalar(
+                select(FamilyCard).where(FamilyCard.kk_number == submission.pending_applicant_no_kk)
+            )
+            if fc is None:
+                fc = await FamilyCardService(self.session).create({
+                    "kk_number": submission.pending_applicant_no_kk,
+                })
+            family_card_id = fc.id
+        resident = await ResidentService(self.session).create({
+            "nik": submission.pending_applicant_nik,
+            "full_name": submission.pending_applicant_nama,
+            "address": submission.pending_applicant_alamat,
+            "family_card_id": family_card_id,
+            "rt_id": submission.pending_applicant_rt_id,
+        })
+        submission.applicant_resident_id = resident.id
+        submission.pending_applicant_nik = None
+        submission.pending_applicant_nama = None
+        submission.pending_applicant_alamat = None
+        logger.info(
+            "Pending applicant materialized into master data submission_id=%s resident_id=%s",
+            submission.id, resident.id,
+        )
+
     async def _issue(self, submission: Submission, actor: User) -> None:
         """Allocate a real number, render the final PDF, and mark ISSUED."""
+        await self._materialize_pending_resident(submission)
         template = await self.template_repo.get(submission.template_id)
         fields = await self._list_template_fields(submission.template_id)
         village = await VillageProfileService(self.session).get()

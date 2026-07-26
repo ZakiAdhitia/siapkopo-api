@@ -145,12 +145,13 @@ class ResidentRead(_Read):
     address: str | None = None
     # Populated by the router (not the ORM object): denormalized display
     # fields so resident:read (staff) doesn't need rt:manage/rw:manage/
-    # dusun:manage/family_card:manage (admin-only) just to show where
-    # someone lives -- see the master-data screen's requirements.
+    # family_card:manage (admin-only) just to show where someone lives --
+    # see the master-data screen's requirements. Dusun is deliberately NOT
+    # included here (Master Data rework: dusun column dropped from the
+    # resident master-data screen).
     kk_number: str | None = None
     rt_number: str | None = None
     rw_number: str | None = None
-    dusun_name: str | None = None
 
 
 class ResidentImportError(BaseModel):

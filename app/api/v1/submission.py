@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -14,9 +15,9 @@ from app.dependencies.pagination import PaginationParams, pagination_params
 from app.models.auth import User
 from app.schemas.common import Page
 from app.schemas.submission import (
-    ApplicantDataRead, ApplicantLookupRead, SubmissionApproveRequest, SubmissionAttachmentRead,
-    SubmissionCreate, SubmissionRead, SubmissionRejectRequest, SubmissionStatusHistoryRead,
-    SubmissionWalkinCreate,
+    ApplicantDataCompleteRequest, ApplicantDataRead, ApplicantLookupRead,
+    SubmissionApproveRequest, SubmissionAttachmentRead, SubmissionCreate, SubmissionRead,
+    SubmissionRejectRequest, SubmissionStatusHistoryRead, SubmissionWalkinCreate,
 )
 from app.services.submission import SubmissionService
 
@@ -31,20 +32,46 @@ async def _load_user(session: AsyncSession, current: CurrentUser) -> User:
 
 
 async def _submission_read(session: AsyncSession, obj) -> dict:
-    """Build a SubmissionRead dict enriched with the applicant's name.
+    """Build a SubmissionRead dict enriched with the applicant's name and
+    supporting documents.
 
     Staff/admin reviewing a submission need to know who it's for, whether it
     came from a logged-in user or a guest -- resolve it the same way the
     PDF-issuance path already does
     (SubmissionService.resolve_applicant_data_for_submission).
     """
+    service = SubmissionService(session)
     data = SubmissionRead.model_validate(obj).model_dump(mode="json")
-    applicant = await SubmissionService(session).resolve_applicant_data_for_submission(obj)
+    applicant = await service.resolve_applicant_data_for_submission(obj)
     data["applicant_nama"] = applicant["nama"]
     data["applicant_nik"] = applicant["nik"]
     data["applicant_alamat"] = applicant["alamat"]
     data["applicant_no_kk"] = applicant["no_kk"]
+    data["applicant_in_master_data"] = obj.applicant_resident_id is not None
+    attachments = await service.list_attachments(obj.id)
+    data["attachments"] = [
+        SubmissionAttachmentRead.model_validate(a).model_dump(mode="json") for a in attachments
+    ]
     return data
+
+
+async def _history_read(session: AsyncSession, history) -> list[dict]:
+    """Build SubmissionStatusHistoryRead dicts enriched with the acting
+    user's username (raw actor_user_id isn't useful to staff/guests
+    checking who approved/rejected a submission)."""
+    from uuid import UUID as _UUID
+
+    actor_ids = {h.actor_user_id for h in history if h.actor_user_id is not None}
+    usernames: dict[_UUID, str] = {}
+    if actor_ids:
+        users = await session.scalars(select(User).where(User.id.in_(actor_ids)))
+        usernames = {u.id: u.username for u in users}
+    result = []
+    for h in history:
+        data = SubmissionStatusHistoryRead.model_validate(h).model_dump(mode="json")
+        data["actor_username"] = usernames.get(h.actor_user_id)
+        result.append(data)
+    return result
 
 
 @router.post("/submissions", response_model=Envelope[SubmissionRead])
@@ -195,8 +222,41 @@ async def get_submission_history(
     service = SubmissionService(session)
     await service.get_scoped(submission_id, _UUID(current.id), current.permissions)
     history = await service.list_history(submission_id)
-    return success_response(
-        [SubmissionStatusHistoryRead.model_validate(h).model_dump(mode="json") for h in history]
+    return success_response(await _history_read(session, history))
+
+
+@router.patch("/submissions/{submission_id}/applicant-data", response_model=Envelope[SubmissionRead])
+async def complete_applicant_data(
+    submission_id: UUID,
+    body: ApplicantDataCompleteRequest,
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:approve")),
+) -> dict:
+    """Staff fills in master-data fields (No. KK, RT) for a guest submission
+    whose NIK wasn't already on file -- applied to residents/family_cards
+    once this submission is approved (Bagian 5, Master Data rework)."""
+    obj = await SubmissionService(session).complete_applicant_data(
+        submission_id, body.no_kk, body.rt_id
+    )
+    return success_response(await _submission_read(session, obj), "Data pemohon diperbarui")
+
+
+@router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")
+async def download_submission_attachment(
+    submission_id: UUID,
+    attachment_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:read")),
+) -> StreamingResponse:
+    """Stream one of a submission's uploaded supporting documents, for
+    staff/admin to view lampiran on the detail page."""
+    from uuid import UUID as _UUID
+    content, attachment = await SubmissionService(session).get_attachment_file(
+        submission_id, attachment_id, _UUID(current.id), current.permissions
+    )
+    return StreamingResponse(
+        io.BytesIO(content), media_type=attachment.content_type,
+        headers={"Content-Disposition": f'inline; filename="{attachment.original_filename}"'},
     )
 
 

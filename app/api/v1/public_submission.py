@@ -1,28 +1,25 @@
 """Public, no-auth submission endpoints: zero-friction guest flow (Bagian
-3.2, STRATEGI doc) -- submit without an account, then check status/download
-the issued PDF later using NIK/WhatsApp/Email instead of a login (Bagian 8,
-STRATEGI doc rev. 2026-07-26 -- no tracking number to save, just one of the
-three identifiers the citizen already knows).
+3.2, STRATEGI doc) -- submit without an account, then check status later
+using NIK/WhatsApp/Email instead of a login (Bagian 8, STRATEGI doc rev.
+2026-07-26 -- no tracking number to save, just one of the three identifiers
+the citizen already knows). The issued PDF is no longer downloadable by the
+guest here (Revisi 2026-07-26 sore): it's an internal working document for
+staff to print/sign/stamp, not a citizen-facing digital deliverable -- see
+`GET /submissions/{id}/pdf` (authenticated, staff/admin only).
 """
-import io
 import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.submission import _submission_read
+from app.api.v1.submission import _history_read, _submission_read
 from app.core.exceptions import NotFoundError, ValidationAppError
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.rate_limit import rate_limit
 from app.schemas.letter_template import LetterTemplateRead, TemplateFieldRead
-from app.schemas.submission import (
-    ApplicantLookupRead,
-    GuestTrackRead,
-    SubmissionStatusHistoryRead,
-)
+from app.schemas.submission import ApplicantLookupRead, GuestTrackRead
 from app.services.letter_template import LetterTemplateService
 from app.services.submission import SubmissionService
 
@@ -115,24 +112,6 @@ async def search_guest_submissions(
     return success_response([await _guest_track_read(session, s) for s in subs])
 
 
-@router.get("/submissions/guest/pdf")
-async def download_guest_submission_pdf(
-    submission_id: UUID = Query(...),
-    nik: str | None = Query(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$"),
-    whatsapp: str | None = Query(default=None),
-    email: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
-) -> StreamingResponse:
-    """Download the issued PDF for a guest submission by id + a matching identifier."""
-    pdf_bytes = await SubmissionService(session).download_pdf_guest(
-        submission_id, nik, whatsapp, email
-    )
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes), media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="surat-{submission_id}.pdf"'},
-    )
-
-
 @router.get(
     "/public/submissions/applicant-lookup",
     response_model=Envelope[ApplicantLookupRead],
@@ -158,9 +137,7 @@ async def _guest_track_read(session: AsyncSession, obj) -> dict:
     history = await service.list_history(obj.id)
     return {
         "submission": await _submission_read(session, obj),
-        "history": [
-            SubmissionStatusHistoryRead.model_validate(h).model_dump(mode="json") for h in history
-        ],
+        "history": await _history_read(session, history),
         "template_name": template.name,
         "template_icon": template.icon,
         "template_color_bg": template.color_bg,
