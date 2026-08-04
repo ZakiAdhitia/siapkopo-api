@@ -6,6 +6,7 @@ the correct domain renderer based on the template's ``code``.
 
 Domain renderer mapping
 -----------------------
+  kk        → KKRenderer        (_kk.py)
   domisili  → DomisiliRenderer  (_domisili.py)
   usaha     → SKURenderer       (_sku.py)
   lahir     → LahirRenderer     (_lahir.py)
@@ -18,15 +19,18 @@ Domain renderer mapping
 """
 from __future__ import annotations
 
+from datetime import date
+
 from jinja2.sandbox import SandboxedEnvironment
 
 from app.models.letter_template import LetterTemplate, TemplateField
 from app.models.master import VillageProfile
 
-from ._base import BaseLetterRenderer, _ddmmyyyy, _hari_indonesia
+from ._base import BaseLetterRenderer, _ddmmyyyy, _hari_indonesia, format_tanggal_indonesia
 from ._docx_engine import DocxLetterRenderer
 from ._domisili import DomisiliRenderer
 from ._generic import GenericRenderer
+from ._kk import KKRenderer
 from ._lahir import LahirRenderer
 from ._mati import MatiRenderer
 from ._na import NARenderer
@@ -65,6 +69,7 @@ class TemplateRenderService:
         self._env.filters["ddmmyyyy"] = _ddmmyyyy
         self._env.filters["hari_indonesia"] = _hari_indonesia
         self._renderers: dict[str, BaseLetterRenderer] = {
+            "kk":       KKRenderer(self._env),
             "domisili": DomisiliRenderer(self._env),
             "usaha":    SKURenderer(self._env),
             "lahir":    LahirRenderer(self._env),
@@ -86,7 +91,21 @@ class TemplateRenderService:
         fields: list[TemplateField],
         profile: VillageProfile,
     ) -> bytes:
-        """Render a PDF preview using auto-generated sample data."""
+        """Render a PDF preview using auto-generated sample data.
+
+        Must mirror `render_issued`'s docx-first preference (2026-08-05 fix,
+        HASIL_UJICOBA_PERROLE.md sekdes item 1): previously this always used
+        the hand-authored HTML/Jinja renderer even for letter types with a
+        real docx specimen, so Template Builder's preview looked nothing
+        like the actual issued PDF for domisili/usaha/lahir/mati/na/uhc.
+        """
+        if self._docx_renderer.supports(template.code):
+            renderer = self._renderer(template)
+            sample = renderer._sample_data(fields)
+            nomor = renderer._preview_number(template)
+            tanggal = format_tanggal_indonesia(date.today())
+            context = self._docx_context(profile, sample, {}, nomor, tanggal)
+            return self._docx_renderer.render(template.code, context)
         return self._renderer(template).render_preview(template, fields, profile)
 
     def render_issued(

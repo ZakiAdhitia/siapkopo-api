@@ -9,9 +9,9 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
 from app.schemas.auth import (
-    ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LogoutRequest,
-    MeData, RefreshRequest, RegisterRequest, RegisterResponse, ResetPasswordRequest,
-    TokenData,
+    ChangePasswordRequest, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest,
+    LogoutRequest, MeData, RefreshRequest, RegisterRequest, RegisterResponse,
+    ResetPasswordRequest, TokenData,
 )
 from app.services.auth import AuthService
 
@@ -58,6 +58,17 @@ async def reset_password(
 ) -> dict:
     """Reset a password using a code from /forgot-password."""
     await AuthService(session).reset_password(body.identifier, body.code, body.new_password)
+    return success_response(None, "Kata sandi berhasil diubah")
+
+
+@router.post("/change-password", response_model=Envelope[None])
+async def change_password(
+    body: ChangePasswordRequest, session: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_permission("auth:me")),
+) -> dict:
+    """Self-service password change from the Profile page (requires the
+    current password, unlike /reset-password's OTP-style code)."""
+    await AuthService(session).change_password(UUID(user.id), body.old_password, body.new_password)
     return success_response(None, "Kata sandi berhasil diubah")
 
 

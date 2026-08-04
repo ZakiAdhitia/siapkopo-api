@@ -11,18 +11,21 @@ class UserCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=150)
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=6)
-    email: str
+    # 2026-08-05 (HASIL_UJICOBA_PERROLE.md kades item 4): swapped from the
+    # original email-required/phone-optional -- a village staff account is
+    # far more likely to have a phone number on file than a personal email.
+    email: str | None = None
+    phone: str = Field(min_length=8, max_length=20)
     position_id: UUID
     nik: str | None = Field(default=None, min_length=8, max_length=20)
-    phone: str | None = None
     rt_id: UUID | None = None
     rw_id: UUID | None = None
     resident_id: UUID | None = None
 
     @field_validator("email")
     @classmethod
-    def _check_email(cls, v: str) -> str:
-        return _validate_email_format(v)
+    def _check_email(cls, v: str | None) -> str | None:
+        return v if v is None else _validate_email_format(v)
 
 
 class UserUpdate(BaseModel):

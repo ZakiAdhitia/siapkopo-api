@@ -1,6 +1,7 @@
 """Submission service: creation with answer validation against TemplateField."""
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any
@@ -22,6 +23,7 @@ from app.models.submission import (
 )
 from app.repositories.base import BaseRepository
 from app.services.approval_config import ApprovalStepConfigService
+from app.services.audit_log import AuditLogService
 from app.services.file_storage import FileStorageService
 from app.services.letter_number import LetterNumberService
 from app.services.master import FamilyCardService, ResidentService, VillageProfileService
@@ -67,16 +69,48 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
-    def _validate_answers(self, fields: list[TemplateField], answers: dict) -> None:
+    _NIK_RE = re.compile(r"^\d{16}$")
+    _RT_RW_RE = re.compile(r"^\d{1,3}$")
+    # Fields that legitimately hold the applicant's OWN nik/name -- never
+    # compared against themselves in the "harus berbeda dari pemohon" checks.
+    _SELF_KEYS = {"nik", "nama"}
+
+    @staticmethod
+    def _field_visible(field: TemplateField, answers: dict) -> bool:
+        """A field is only shown to (and required from) the applicant when
+        its `validation_rules.show_when` condition (if any) is satisfied --
+        e.g. NA's "jika Duda/Janda" group is hidden and not required for a
+        Jejaka/Perawan applicant. `validation_rules` is otherwise unused
+        metadata on TemplateField, repurposed here for this one purpose."""
+        rules = field.validation_rules or {}
+        show_when = rules.get("show_when")
+        if not show_when:
+            return True
+        return answers.get(show_when["field"]) in show_when.get("in", [])
+
+    def _validate_answers(
+        self, fields: list[TemplateField], answers: dict, applicant: dict | None = None,
+    ) -> None:
         """Validate submitted answers against the template's field definitions.
 
         Collects ALL errors before raising (not just the first) so the
-        client can fix everything in one round-trip.
+        client can fix everything in one round-trip. Beyond required/select-
+        choice/number checks, also enforces (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md):
+        conditionally-required fields stay required only while visible, NIK-
+        shaped fields must be 16 digits, RT/RW-shaped fields must be numeric,
+        birth-date fields can't be today/future, and third-party NIK/name
+        fields (ayah/ibu/pasangan) can't equal the applicant's own.
         """
         errors: list[str] = []
+        applicant_nik = (applicant or {}).get("nik")
+        applicant_nama = (applicant or {}).get("nama")
         for field in fields:
-            value = answers.get(field.field_key)
+            key = field.field_key
+            visible = self._field_visible(field, answers)
+            value = answers.get(key)
             is_empty = value is None or value == ""
+            if not visible:
+                continue
             if field.is_required and is_empty:
                 errors.append(f"{field.label} wajib diisi")
                 continue
@@ -89,6 +123,23 @@ class SubmissionService:
                     float(value)
                 except (TypeError, ValueError):
                     errors.append(f"{field.label} harus berupa angka")
+            if "nik" in key and field.field_type == FieldType.TEXT:
+                text_value = str(value).strip()
+                if not self._NIK_RE.match(text_value):
+                    errors.append(f"{field.label} harus berupa 16 digit angka")
+                elif key not in self._SELF_KEYS and applicant_nik and text_value == applicant_nik:
+                    errors.append(f"{field.label} tidak boleh sama dengan NIK pemohon")
+            if (key == "rt" or key.startswith("rt_") or key == "rw" or key.startswith("rw_")) \
+                    and field.field_type == FieldType.TEXT and not self._RT_RW_RE.match(str(value).strip()):
+                errors.append(f"{field.label} harus berupa angka (mis. 01)")
+            if field.field_type == FieldType.DATE and "meninggal" not in key \
+                    and ("tanggal_lahir" in key or "tgl_lahir" in key):
+                parsed = self._parse_date(value)
+                if parsed and parsed >= date.today():
+                    errors.append(f"{field.label} tidak boleh hari ini atau di masa depan")
+            if key not in self._SELF_KEYS and key in ("nama_ayah", "nama_ibu", "nama_pasangan") \
+                    and applicant_nama and str(value).strip().lower() == applicant_nama.strip().lower():
+                errors.append(f"{field.label} tidak boleh sama dengan nama pemohon")
         if errors:
             raise ValidationAppError("; ".join(errors))
 
@@ -200,7 +251,8 @@ class SubmissionService:
         if template is None or not template.is_active:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers)
+        applicant = await self.resolve_applicant_data(user)
+        self._validate_answers(fields, answers, applicant)
 
         obj = Submission(
             template_id=template_id,
@@ -294,7 +346,7 @@ class SubmissionService:
         if template is None or not template.is_active:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers)
+        self._validate_answers(fields, answers, {"nik": nik, "nama": applicant_nama})
 
         required_docs = set(self._resolve_required_documents(template, answers))
         optional_docs = set(template.optional_documents)
@@ -370,7 +422,7 @@ class SubmissionService:
         if template is None or not template.is_active:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers)
+        self._validate_answers(fields, answers, {"nik": nik, "nama": applicant_nama})
 
         resident = await self._resolve_or_create_resident(nik, applicant_nama, applicant_alamat)
 
@@ -446,7 +498,8 @@ class SubmissionService:
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
             raise ValidationAppError("Data formulir tidak bisa diedit untuk pengajuan yang ditolak")
         fields = await self._list_template_fields(obj.template_id)
-        self._validate_answers(fields, answers)
+        applicant = await self.resolve_applicant_data_for_submission(obj)
+        self._validate_answers(fields, answers, applicant)
         obj.answers = answers
         await self.session.commit()
         logger.info("Submission answers updated by staff submission_id=%s", submission_id)
@@ -1048,6 +1101,10 @@ class SubmissionService:
             "Submission PDF regenerated id=%s letter_number=%s by=%s",
             obj.id, obj.letter_number, actor.id,
         )
+        await AuditLogService(self.session).record(
+            actor, "generate_pdf", f"Generate ulang PDF surat {obj.letter_number}",
+            entity_type="submission", entity_id=obj.id,
+        )
         return obj
 
     # label -> Resident column, for the shared identity snapshot every
@@ -1147,6 +1204,11 @@ class SubmissionService:
             ))
         await self.session.commit()
         logger.info("Submission approve processed id=%s by=%s", obj.id, actor.id)
+        await AuditLogService(self.session).record(
+            actor, "approve",
+            f"Menyetujui pengajuan {obj.letter_number or obj.id}" + (" (surat terbit)" if is_last_step else ""),
+            entity_type="submission", entity_id=obj.id,
+        )
         if is_last_step:
             attachment = (f"{obj.letter_number or obj.id}.pdf", issued_pdf) if issued_pdf else None
             await self._notify(
@@ -1182,6 +1244,10 @@ class SubmissionService:
         ))
         await self.session.commit()
         logger.info("Submission rejected id=%s by=%s", obj.id, actor.id)
+        await AuditLogService(self.session).record(
+            actor, "reject", f"Menolak pengajuan {obj.id}: {reason}",
+            entity_type="submission", entity_id=obj.id,
+        )
         await self._notify(obj, "rejected", f"Pengajuan surat Anda ditolak. Alasan: {reason}")
         return obj
 
@@ -1208,17 +1274,34 @@ class SubmissionService:
         so this just serves that saved file. Falls back to rendering on
         demand for submissions issued before that change (no
         `sub_document_storage_paths` yet).
+
+        NA's N.4/N.5 forms are the exception (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md
+        poin 1): they need no Kepala Desa/Sekdes signature at all, so the
+        applicant can download them the moment the data is filled in --
+        while still PENDING -- unlike every other (sub-)document, which
+        stays gated behind ISSUED.
         """
         obj = await self.get_or_404(submission_id)
-        if obj.status != SubmissionStatus.ISSUED or obj.letter_number is None:
+        template = await self.template_repo.get(obj.template_id)
+        unsigned_preview_ok = (
+            template is not None and template.code == "na" and sub_doc_code in ("na_n4", "na_n5")
+        )
+        if not unsigned_preview_ok and (obj.status != SubmissionStatus.ISSUED or obj.letter_number is None):
             raise ValidationAppError("Surat belum terbit")
         can_read_all = "*" in actor_permissions or "submission:read_all" in actor_permissions
         if not can_read_all and obj.submitted_by_user_id != actor_user_id:
             raise ForbiddenError("Anda tidak berhak mengunduh surat ini")
+        if unsigned_preview_ok and obj.status != SubmissionStatus.ISSUED:
+            village = await VillageProfileService(self.session).get()
+            applicant = await self.resolve_applicant_data_for_submission(obj)
+            tanggal = format_tanggal_indonesia(datetime.now(timezone.utc))
+            return TemplateRenderService().render_issued_sub_document(
+                template=template, profile=village, answers=obj.answers, applicant=applicant,
+                nomor="-", tanggal=tanggal, sub_doc_code=sub_doc_code,
+            )
         saved_path = (obj.sub_document_storage_paths or {}).get(sub_doc_code)
         if saved_path:
             return await FileStorageService().read(saved_path)
-        template = await self.template_repo.get(obj.template_id)
         village = await VillageProfileService(self.session).get()
         applicant = await self.resolve_applicant_data_for_submission(obj)
         tanggal = format_tanggal_indonesia(obj.issued_at or datetime.now(timezone.utc))

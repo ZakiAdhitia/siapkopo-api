@@ -67,6 +67,11 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6)
+
+
 class RefreshRequest(BaseModel):
     """Raw refresh token submitted for rotation."""
 

@@ -24,6 +24,16 @@ class UserRepository:
         stmt = select(User).where(User.nik == nik, User.deleted_at.is_(None))
         return await self.session.scalar(stmt)
 
+    async def get_by_email(self, email: str) -> User | None:
+        """Return the active user with the given email, or None."""
+        stmt = select(User).where(User.email == email, User.deleted_at.is_(None))
+        return await self.session.scalar(stmt)
+
+    async def get_by_phone(self, phone: str) -> User | None:
+        """Return the active user with the given phone number, or None."""
+        stmt = select(User).where(User.phone == phone, User.deleted_at.is_(None))
+        return await self.session.scalar(stmt)
+
     async def get_by_id(self, user_id: uuid.UUID) -> User | None:
         """Return the active user with the given id, or None."""
         stmt = select(User).where(User.id == user_id, User.deleted_at.is_(None))

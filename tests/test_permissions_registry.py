@@ -25,9 +25,14 @@ def test_position_shapes():
 
 def test_template_permissions_registered():
     assert "template:manage" in PERMISSIONS
+    assert "template:configure" in PERMISSIONS
     assert "template:read" in PERMISSIONS
     assert "template:read" in ROLE_PERMISSIONS["staff"]
-    assert "template:manage" in ROLE_PERMISSIONS["admin"]
+    # 2026-08-05 (HASIL_UJICOBA_PERROLE.md sekdes item 1): the "admin" Role
+    # (Kepala Desa + Sekretaris Desa) only gets template:configure (toggle
+    # active + preview), not full template:manage (create/edit fields).
+    assert "template:configure" in ROLE_PERMISSIONS["admin"]
+    assert "template:manage" not in ROLE_PERMISSIONS["admin"]
 
 
 def test_submission_permissions_registered():
@@ -39,9 +44,16 @@ def test_submission_permissions_registered():
         assert code in PERMISSIONS
     for code in ("auth:me", "submission:create", "submission:read", "submission:download"):
         assert code in ROLE_PERMISSIONS["warga"]
-    for role in ("staff", "admin"):
-        for code in (
-            "submission:read", "submission:read_all", "submission:approve",
-            "submission:reject", "submission:download",
-        ):
-            assert code in ROLE_PERMISSIONS[role]
+    for code in (
+        "submission:read", "submission:read_all", "submission:approve",
+        "submission:reject", "submission:download",
+    ):
+        assert code in ROLE_PERMISSIONS["staff"]
+    # 2026-08-05 (HASIL_UJICOBA_PERROLE.md kades item 2): the "admin" Role
+    # itself only gets read/read_all/download now -- approve/reject move to
+    # the Sekretaris Desa Position so Kepala Desa stays view-only.
+    for code in ("submission:read", "submission:read_all", "submission:download"):
+        assert code in ROLE_PERMISSIONS["admin"]
+    for code in ("submission:approve", "submission:reject"):
+        assert code not in ROLE_PERMISSIONS["admin"]
+        assert code in POSITION_PERMISSIONS["sekretaris_desa"]

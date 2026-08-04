@@ -55,6 +55,17 @@ class LetterTemplateService:
         logger.info("LetterTemplate updated id=%s", id_)
         return obj
 
+    async def set_active(self, id_: uuid.UUID, is_active: bool) -> LetterTemplate:
+        """Toggle whether a template can be submitted by warga, without
+        touching any other field -- the one template:configure-gated action
+        (HASIL_UJICOBA_PERROLE.md sekdes item 1: can choose which templates
+        are offered, but can't edit the template itself)."""
+        obj = await self.get_or_404(id_)
+        obj = await self.repo.update(obj, is_active=is_active)
+        await self.session.commit()
+        logger.info("LetterTemplate is_active toggled id=%s is_active=%s", id_, is_active)
+        return obj
+
     async def delete(self, id_: uuid.UUID) -> None:
         """Soft-delete a template."""
         obj = await self.get_or_404(id_)

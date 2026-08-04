@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_name: str = "SIPADES"
+    app_name: str = "SIAPKOPO"
     app_env: str = "development"
     debug: bool = True
     api_v1_prefix: str = "/api/v1"
@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     password_reset_ttl_seconds: int = 600
     password_reset_code_length: int = 6
+
+    # Fonnte WhatsApp gateway (https://fonnte.com) -- used to deliver the
+    # password-reset OTP over WhatsApp. Empty by default so a missing key
+    # fails soft (log-only, see WhatsAppProvider) instead of crashing.
+    fonnte_api_key: str = ""
+    fonnte_api_url: str = "https://api.fonnte.com/send"
 
     # NoDecode stops pydantic-settings from JSON-decoding the raw env value,
     # so the validator below can split a plain comma-separated string.

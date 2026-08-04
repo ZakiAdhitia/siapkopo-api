@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.core.redis import get_redis
 from app.models.auth import User
 from app.services.notification import LoggingNotificationProvider, NotificationProvider
+from app.services.whatsapp import WhatsAppProvider
 
 logger = get_logger("password_reset")
 
@@ -20,25 +21,34 @@ logger = get_logger("password_reset")
 class PasswordResetService:
     """Generate and verify one-time password-reset codes stored in Redis."""
 
-    def __init__(self, provider: NotificationProvider | None = None) -> None:
+    def __init__(
+        self, provider: NotificationProvider | None = None,
+        whatsapp: WhatsAppProvider | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.redis = get_redis()
         self.provider = provider or LoggingNotificationProvider()
+        self.whatsapp = whatsapp or WhatsAppProvider()
 
     def _key(self, user_id: uuid.UUID) -> str:
         return f"pwreset:{user_id}"
 
     async def request_reset(self, user: User) -> str:
-        """Generate a reset code, store with TTL, email it, return it (dev delivery)."""
+        """Generate a reset code, store with TTL, send it over every contact
+        channel the account has on file (WhatsApp via Fonnte + email), and
+        return it (dev delivery)."""
         code = "".join(
             secrets.choice("0123456789") for _ in range(self.settings.password_reset_code_length)
         )
         await self.redis.set(self._key(user.id), code, ex=self.settings.password_reset_ttl_seconds)
+        message = (
+            f"Kode reset password SIAPKOPO Anda: {code} "
+            f"(berlaku {self.settings.password_reset_ttl_seconds // 60} menit)"
+        )
+        if user.phone:
+            await self.whatsapp.send_message(user.phone, message)
         if user.email:
-            self.provider.send_email(
-                user.email, "Kode Reset Password SIPADES",
-                f"Kode reset password Anda: {code} (berlaku {self.settings.password_reset_ttl_seconds // 60} menit)",
-            )
+            self.provider.send_email(user.email, "Kode Reset Password SIAPKOPO", message)
         if self.settings.app_env != "production":
             logger.info("Password reset code for user_id=%s: %s (dev)", user.id, code)
         else:

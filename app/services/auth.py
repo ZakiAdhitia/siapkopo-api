@@ -16,6 +16,7 @@ from app.core.security import (
 from app.models.auth import Position, Role, User
 from app.models.master import RT, RW, Resident
 from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.services.audit_log import AuditLogService
 from app.services.password_reset import PasswordResetService
 
 logger = get_logger("auth")
@@ -80,11 +81,9 @@ class AuthService:
         }
 
     async def login(self, identifier: str, password: str) -> dict:
-        """Authenticate by username OR NIK, both matched against `password`."""
+        """Authenticate by username, NIK, email, or phone, all matched against `password`."""
         clean = identifier.strip()
-        user = await self.users.get_by_username(clean.lower())
-        if user is None:
-            user = await self.users.get_by_nik(clean)
+        user = await self._resolve_by_identifier(clean)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
             logger.warning("Login gagal untuk identifier=%s", clean)
             raise UnauthorizedError("Identitas atau kata sandi salah")
@@ -96,6 +95,7 @@ class AuthService:
             raise UnauthorizedError("Akun tidak aktif")
         result = await self._issue(user)
         logger.info("Login sukses user_id=%s role=%s", user.id, user.role.name)
+        await AuditLogService(self.session).record(user, "login", f"{user.full_name} login ke sistem")
         return result
 
     async def refresh(self, raw_refresh: str) -> dict:
@@ -122,6 +122,11 @@ class AuthService:
                 await self.refresh_tokens.revoke(token)
                 await self.session.commit()
         logger.info("Logout jti=%s", jti)
+        sub = access_payload.get("sub")
+        if sub:
+            actor = await self.users.get_by_id(uuid.UUID(sub))
+            if actor:
+                await AuditLogService(self.session).record(actor, "logout", f"{actor.full_name} logout dari sistem")
 
     async def is_blacklisted(self, jti: str) -> bool:
         """Return True if an access jti has been blacklisted."""
@@ -218,10 +223,17 @@ class AuthService:
         return user, is_active
 
     async def _resolve_by_identifier(self, identifier: str) -> User | None:
+        """Match a login/forgot-password identifier against username, NIK,
+        email, or phone -- in that order, first match wins (2026-08-04:
+        widened from username/NIK-only)."""
         clean = identifier.strip()
         user = await self.users.get_by_username(clean.lower())
         if user is None:
             user = await self.users.get_by_nik(clean)
+        if user is None and "@" in clean:
+            user = await self.users.get_by_email(clean.lower())
+        if user is None:
+            user = await self.users.get_by_phone(clean)
         return user
 
     async def forgot_password(self, identifier: str) -> str | None:
@@ -247,3 +259,18 @@ class AuthService:
         await self.refresh_tokens.revoke_all_for_user(user.id)
         await self.session.commit()
         logger.info("Password reset sukses user_id=%s", user.id)
+
+    async def change_password(self, user_id: uuid.UUID, old_password: str, new_password: str) -> None:
+        """Self-service password change from the Profile page
+        (HASIL_UJICOBA_DILUAR_ROLE.md poin 3) -- unlike `reset_password`
+        (unauthenticated, code-based), this is for an already-logged-in
+        user who knows their current password. Every other session is
+        revoked afterward, same as a reset, since the old password may
+        have been compromised."""
+        user = await self.users.get_by_id(user_id)
+        if user is None or not user.hashed_password or not verify_password(old_password, user.hashed_password):
+            raise UnauthorizedError("Kata sandi lama salah")
+        user.hashed_password = hash_password(new_password)
+        await self.refresh_tokens.revoke_all_for_user(user.id)
+        await self.session.commit()
+        logger.info("Password diubah sendiri oleh user_id=%s", user.id)

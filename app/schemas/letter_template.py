@@ -72,6 +72,10 @@ class LetterTemplateCreate(BaseModel):
     sub_documents: list[dict] | None = None
 
 
+class TemplateActiveRequest(BaseModel):
+    is_active: bool
+
+
 class LetterTemplateUpdate(BaseModel):
     name: str | None = None
     description: str | None = None

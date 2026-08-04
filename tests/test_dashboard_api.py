@@ -12,7 +12,12 @@ async def _headers(client, username, password):
 
 
 async def _setup_and_submit(client, db_session):
-    h = await _headers(client, "kades", "kades123")
+    # 2026-08-05: template create/field-add/approval-step-config now require
+    # template:manage/approval_config:manage, which Kepala Desa (kades) no
+    # longer holds (HASIL_UJICOBA_PERROLE.md kades items 1/4) -- use the
+    # unrestricted "operator" (administrator-it, "*") account for setup,
+    # same pattern as test_submission_api.py's _setup_village_template_workflow.
+    h = await _headers(client, "operator", "operator123")
     template = await client.post("/api/v1/templates", json={
         "code": "dashuji", "name": "Surat Dashboard Uji",
         "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",

@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.letter_template import LetterOutputCategory
 from app.models.submission import HistoryAction, SubmissionStatus
@@ -89,6 +89,13 @@ class ApplicantDataCompleteRequest(BaseModel):
     tanggal_lahir: date | None = None
     pekerjaan: str | None = None
     status_kawin: str | None = None
+
+    @field_validator("tanggal_lahir")
+    @classmethod
+    def _tanggal_lahir_not_today_or_future(cls, value: date | None) -> date | None:
+        if value is not None and value >= date.today():
+            raise ValueError("Tanggal lahir tidak boleh hari ini atau di masa depan")
+        return value
 
 
 class SubmissionAttachmentRead(_Read):

@@ -7,13 +7,15 @@ PERMISSIONS: list[str] = [
     "resident:import", "resident:export",
     "village:manage", "rw:manage", "rt:manage", "rt:read", "rw:read",
     "family_card:manage",
-    "template:manage", "template:read",
+    "template:manage", "template:configure", "template:read",
     "submission:create", "submission:read", "submission:read_all",
     "submission:approve", "submission:reject", "submission:download", "submission:walkin",
     "approval_config:manage",
     "user:manage",
     "dashboard:read",
     "portal:manage",
+    "attendance:create", "attendance:read_all",
+    "audit:read",
 ]
 
 # Role name -> permission codes. "*" means all permissions.
@@ -24,16 +26,28 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
               "resident:import", "resident:export", "template:read", "rt:read", "rw:read",
               "submission:read", "submission:read_all", "submission:approve",
               "submission:reject", "submission:download", "submission:walkin",
-              "dashboard:read"],
+              "dashboard:read", "attendance:create"],
+    # attendance:create, submission:approve/reject/walkin, and
+    # approval_config:manage deliberately NOT here -- Kepala Desa and
+    # Sekretaris Desa both hold this Role, but HASIL_UJICOBA_PERROLE.md
+    # (kades items 2/3/4) restricts Kepala Desa to VIEW-only across
+    # submissions, hides Mode Loket, and hides approval-flow config from
+    # them entirely; only Sekretaris Desa keeps these, granted per-Position
+    # below (same split as attendance:create). submission:read_all/download
+    # stay here since Kepala Desa still needs to see and print issued
+    # letters, just not approve/reject/walk-in/edit them.
     "admin": ["auth:me", "resident:read", "resident:update",
               "resident:import", "resident:export",
               "village:manage", "rw:manage", "rt:manage", "rt:read", "rw:read",
               "family_card:manage",
-              "template:manage", "template:read",
-              "submission:read", "submission:read_all", "submission:approve",
-              "submission:reject", "submission:download", "submission:walkin",
-              "approval_config:manage",
-              "user:manage", "dashboard:read", "portal:manage"],
+              # template:manage (create template, add/edit/delete fields)
+              # deliberately NOT here -- HASIL_UJICOBA_PERROLE.md sekdes item 1:
+              # only toggling which templates are offered (template:configure)
+              # and previewing/reading are allowed from this Role.
+              "template:configure", "template:read",
+              "submission:read", "submission:read_all", "submission:download",
+              "user:manage", "dashboard:read", "portal:manage",
+              "attendance:read_all", "audit:read"],
     "administrator-it": ["*"],
 }
 
@@ -59,8 +73,14 @@ POSITION_DEFS: list[tuple[str, str, int]] = [
 # Every slug from POSITION_DEFS must have an entry here, even if empty, so
 # seeding can always look it up.
 POSITION_PERMISSIONS: dict[str, list[str]] = {
+    # Level-1 (highest authority) doesn't check in -- only reviews the
+    # attendance list (attendance:read_all, granted via the "admin" Role
+    # above). Every other position that works from the desa office does.
     "kepala_desa": [],
-    "sekretaris_desa": [],
+    "sekretaris_desa": [
+        "attendance:create", "submission:approve", "submission:reject",
+        "submission:walkin", "approval_config:manage",
+    ],
     "bendahara_desa": [],
     "staff_desa": [],
     "rw": [],

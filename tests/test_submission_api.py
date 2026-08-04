@@ -74,8 +74,11 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     assert approve1.status_code == 200
     assert approve1.json()["data"]["status"] == "pending"
 
-    kades_tok = await _token(client, "kades", "kades123")
-    kh = {"Authorization": f"Bearer {kades_tok}"}
+    # 2026-08-05: Kepala Desa (kades) can no longer approve/reject at all
+    # (HASIL_UJICOBA_PERROLE.md kades item 2) -- only Sekretaris Desa
+    # (sekdes) holds submission:approve within the "admin" Role now.
+    sekdes_tok = await _token(client, "sekdes", "sekdes123")
+    kh = {"Authorization": f"Bearer {sekdes_tok}"}
     approve2 = await client.post(
         f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=kh
     )

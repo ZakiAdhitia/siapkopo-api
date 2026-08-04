@@ -2,7 +2,15 @@
 from datetime import date
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _not_today_or_future(value: date | None) -> date | None:
+    """Shared birth_date guard (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md poin E):
+    nobody's birth date can be today or in the future."""
+    if value is not None and value >= date.today():
+        raise ValueError("Tanggal lahir tidak boleh hari ini atau di masa depan")
+    return value
 
 
 class _Read(BaseModel):
@@ -106,6 +114,8 @@ class ResidentCreate(BaseModel):
     address: str | None = None
     marital_status: str | None = None
 
+    _validate_birth_date = field_validator("birth_date")(_not_today_or_future)
+
 
 class ResidentUpdate(BaseModel):
     full_name: str | None = None
@@ -118,6 +128,8 @@ class ResidentUpdate(BaseModel):
     phone: str | None = None
     address: str | None = None
     marital_status: str | None = None
+
+    _validate_birth_date = field_validator("birth_date")(_not_today_or_future)
 
 
 class ResidentRead(_Read):

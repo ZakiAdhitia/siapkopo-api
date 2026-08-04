@@ -16,6 +16,7 @@ from app.schemas.letter_template import (
     LetterTemplateRead,
     LetterTemplateUpdate,
     ReorderFieldsRequest,
+    TemplateActiveRequest,
     TemplateFieldCreate,
     TemplateFieldRead,
     TemplateFieldUpdate,
@@ -73,6 +74,20 @@ async def update_template(
 ) -> dict:
     """Update a letter template's metadata."""
     obj = await LetterTemplateService(session).update(template_id, body.model_dump(exclude_unset=True))
+    return success_response(LetterTemplateRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
+
+
+@router.patch("/templates/{template_id}/active", response_model=Envelope[LetterTemplateRead])
+async def set_template_active(
+    template_id: UUID,
+    body: TemplateActiveRequest,
+    session: AsyncSession = Depends(get_db),
+    _=Depends(require_permission("template:configure")),
+) -> dict:
+    """Toggle whether warga can submit this template -- the only template
+    change allowed from `template:configure` alone (no `template:manage`),
+    e.g. Sekretaris Desa (HASIL_UJICOBA_PERROLE.md sekdes item 1)."""
+    obj = await LetterTemplateService(session).set_active(template_id, body.is_active)
     return success_response(LetterTemplateRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
 
 

@@ -224,6 +224,63 @@ async def seed_letter_templates(session: AsyncSession) -> None:
                 created, len(existing))
 
 
+async def sync_letter_template_fields(session: AsyncSession) -> None:
+    """Keep already-seeded templates' fields in sync with
+    `letter_template_data.py` for templates created before a source edit
+    (2026-08-05, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md fixes) -- unlike
+    `seed_letter_templates` (whole-template create-once), this updates each
+    existing field's label/is_required/validation_rules/options/placeholder
+    by `field_key` match, and adds any field newly present in the source
+    that an existing template doesn't have yet. Never deletes a field, so
+    it can't orphan an existing submission's `answers`. Also refreshes
+    `pdf_body_template` so a rewritten letter body takes effect without a
+    destructive reseed.
+    """
+    updated_fields = 0
+    added_fields = 0
+    updated_templates = 0
+    for entry in SURAT_TEMPLATES:
+        template = await session.scalar(
+            select(LetterTemplate).where(LetterTemplate.code == entry["code"])
+        )
+        if template is None:
+            continue
+        if template.pdf_body_template != entry["pdf_body_template"]:
+            template.pdf_body_template = entry["pdf_body_template"]
+            updated_templates += 1
+        existing_fields = {
+            f.field_key: f for f in (await session.scalars(
+                select(TemplateField).where(TemplateField.template_id == template.id)
+            )).all()
+        }
+        for order_index, field_tuple in enumerate(entry["fields"]):
+            key, label, ftype, options, placeholder, required, rules, *rest = field_tuple
+            is_staff_only = rest[0] if rest else False
+            existing = existing_fields.get(key)
+            if existing is None:
+                session.add(TemplateField(
+                    template_id=template.id, order_index=order_index, field_key=key,
+                    label=label, field_type=FieldType(ftype), options=options,
+                    placeholder=placeholder, is_required=required, validation_rules=rules,
+                    is_staff_only=is_staff_only,
+                ))
+                added_fields += 1
+                continue
+            if (existing.label, existing.is_required, existing.validation_rules,
+                    existing.options, existing.placeholder) != (label, required, rules, options, placeholder):
+                existing.label = label
+                existing.is_required = required
+                existing.validation_rules = rules
+                existing.options = options
+                existing.placeholder = placeholder
+                updated_fields += 1
+    await session.commit()
+    logger.info(
+        "sync_letter_template_fields complete: %d templates refreshed, %d fields updated, %d fields added",
+        updated_templates, updated_fields, added_fields,
+    )
+
+
 async def seed_link_demo_resident(session: AsyncSession) -> None:
     """Link the demo 'warga' user to its matching Resident row.
 
@@ -320,6 +377,7 @@ async def seed_all(session: AsyncSession) -> None:
     await seed_village_profile(session)
     await seed_master(session)
     await seed_letter_templates(session)
+    await sync_letter_template_fields(session)
     await seed_link_demo_resident(session)
     await seed_link_demo_rt_rw(session)
     await seed_approval_steps(session)

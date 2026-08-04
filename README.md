@@ -1,6 +1,6 @@
-# SIPADES Backend (sipades-kopo-api)
+# SIAPKOPO Backend (sipades-kopo-api)
 
-Backend API for **SIPADES** — Sistem Administrasi Desa (Desa Kopo). Built with FastAPI,
+Backend API for **SIAPKOPO** — Sistem Administrasi dan Pengajuan Kopo (Desa Kopo). Built with FastAPI,
 SQLAlchemy (async), PostgreSQL, Redis, and Alembic, following Clean Architecture
 (router → service → repository → model) with data-driven RBAC.
 
@@ -56,7 +56,7 @@ Key variables in `.env`:
 - `REDIS_URL` — defaults to `redis://localhost:6379/0`
 - `JWT_SECRET` — change for any non-local environment
 - `CORS_ORIGINS` — comma-separated list; defaults to `http://localhost:5173` (the
-  SIPADES frontend dev server)
+  SIAPKOPO frontend dev server)
 
 ## Redis
 

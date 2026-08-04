@@ -2,8 +2,8 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
-    approval_config, auth, dashboard, domain_master, health, letter_template, master,
-    portal, public_portal, public_submission, submission, users,
+    approval_config, attendance, audit_log, auth, dashboard, domain_master, health,
+    letter_template, master, portal, public_portal, public_submission, submission, users,
 )
 
 api_router = APIRouter()
@@ -13,6 +13,7 @@ api_router.include_router(master.router)
 api_router.include_router(domain_master.router)
 api_router.include_router(letter_template.router)
 api_router.include_router(approval_config.router)
+api_router.include_router(attendance.router)
 # public_submission's literal /submissions/guest/... paths MUST be registered
 # before submission's parameterized /submissions/{submission_id}/... routes,
 # same reason as the /templates/{id}/fields/reorder ordering in
@@ -25,3 +26,4 @@ api_router.include_router(users.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(portal.router)
 api_router.include_router(public_portal.router)
+api_router.include_router(audit_log.router)

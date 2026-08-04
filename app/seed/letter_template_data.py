@@ -91,16 +91,30 @@ SURAT_TEMPLATES: list[dict] = [
             ("keterangan_perubahan", "Keterangan Perubahan", "text",
              None, "mis. penambahan anggota", True, None),
         ],
+        # F-1.02 "Formulir Pendaftaran Peristiwa Kependudukan" (ALUR_PENGISIAN_KK.md
+        # bagian B): a registration form the citizen brings to Dukcapil, not a
+        # Kepala-Desa-signed keterangan -- rendered by the dedicated KKRenderer
+        # (_kk.py), registered in TemplateRenderService like every other
+        # domain-specific letter (2026-08-05 fix, was silently falling through
+        # to GenericRenderer's plain paragraph body).
         "pdf_body_template": (
-            "<p>Yang bertanda tangan di bawah ini, Kepala Desa Kopo, menerangkan dengan "
-            "sesungguhnya bahwa:</p>"
-            "<p>Nama: <b>{{ nama }}</b><br>NIK: {{ nik }}<br>Alamat: {{ alamat }}</p>"
-            "<p>Adalah benar warga kami yang mengajukan permohonan Kartu Keluarga dengan "
-            "rincian sebagai berikut:</p>"
-            "<p>Status Perubahan: {{ status_perubahan }}<br>"
-            "Jumlah Anggota Keluarga: {{ jumlah_anggota_keluarga }} orang<br>"
-            "Keterangan: {{ keterangan_perubahan }}</p>"
-            "<p>Demikian surat keterangan ini dibuat untuk dipergunakan sebagaimana mestinya.</p>"
+            "<table style='width:100%; border-collapse:collapse; margin:10px 0;'>"
+            "<tr><td style='width:32%; padding:2px 0;'>N a m a</td><td style='width:4%;'>:</td><td><b>{{ nama|upper }}</b></td></tr>"
+            "<tr><td style='padding:2px 0;'>NIK</td><td>:</td><td>{{ nik }}</td></tr>"
+            "<tr><td style='padding:2px 0;'>No. KK Lama</td><td>:</td><td>{{ no_kk or '-' }}</td></tr>"
+            "<tr><td style='padding:2px 0; vertical-align:top;'>Alamat</td><td style='vertical-align:top;'>:</td><td>"
+            "{{ alamat or '-' }} RT. {{ rt or '-' }} RW. {{ rw or '-' }} Desa {{ village_name }}<br>"
+            "Kecamatan {{ kecamatan }} Kabupaten {{ kabupaten }}.</td></tr>"
+            "</table>"
+            "<p>Dengan ini mengajukan pendaftaran peristiwa kependudukan sebagai berikut:</p>"
+            "<table style='width:100%; border-collapse:collapse; margin:10px 0;'>"
+            "<tr><td style='width:32%; padding:2px 0;'>Jenis Peristiwa</td><td style='width:4%;'>:</td><td><b>{{ status_perubahan }}</b></td></tr>"
+            "<tr><td style='padding:2px 0;'>Jumlah Anggota Keluarga</td><td>:</td><td>{{ jumlah_anggota_keluarga }} orang</td></tr>"
+            "<tr><td style='padding:2px 0; vertical-align:top;'>Keterangan</td><td style='vertical-align:top;'>:</td><td>{{ keterangan_perubahan }}</td></tr>"
+            "</table>"
+            "<p>Pemohon menyatakan data di atas benar dan bersedia melengkapi berkas pendukung "
+            "sesuai jenis peristiwa yang diajukan sebagaimana disyaratkan Desa {{ village_name }}, "
+            "untuk selanjutnya diproses lebih lanjut oleh Dinas Kependudukan dan Catatan Sipil.</p>"
         ),
     },
     {
@@ -376,20 +390,36 @@ SURAT_TEMPLATES: list[dict] = [
             ("rt_calon", "RT Calon", "text", None, "mis. 003", True, None),
             ("rw_calon", "RW Calon", "text", None, "mis. 012", True, None),
             ("status_calon", "Status Pernikahan Calon", "select", ["Jejaka", "Perawan", "Duda", "Janda"], None, True, None),
-            ("jumlah_istri", "Jumlah Istri Sebelumnya (jika Duda)", "text", None, "mis. 1", False, None),
-            ("sebab_cerai", "Sebab Berakhirnya Perkawinan Terdahulu (jika Duda/Janda)", "select", ["Cerai Mati", "Cerai Hidup"], None, False, None),
-            ("no_akta_cerai", "No. Akta Cerai (jika Cerai Hidup)", "text", None, "mis. 4248/AC/2024/PA.Cbn", False, None),
-            ("pasangan_terdahulu", "Nama Suami/Istri Terdahulu (jika Duda/Janda)", "text", None, "nama pasangan sebelumnya", False, None),
-            # N.6 (Ket. Kematian Suami/Istri Terdahulu) fields -- only filled
+            # Duda/Janda-only group (2026-08-05, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md
+            # poin 1): hidden AND not required for Jejaka/Perawan via
+            # validation_rules.show_when, enforced generically by
+            # SubmissionService._validate_answers/_field_visible.
+            ("jumlah_istri", "Jumlah Istri/Suami Sebelumnya", "text", None, "mis. 1",
+             True, {"show_when": {"field": "status_calon", "in": ["Duda", "Janda"]}}),
+            ("sebab_cerai", "Sebab Berakhirnya Perkawinan Terdahulu", "select", ["Cerai Mati", "Cerai Hidup"], None,
+             True, {"show_when": {"field": "status_calon", "in": ["Duda", "Janda"]}}),
+            ("no_akta_cerai", "No. Akta Cerai", "text", None, "mis. 4248/AC/2024/PA.Cbn",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Hidup"]}}),
+            ("pasangan_terdahulu", "Nama Suami/Istri Terdahulu", "text", None, "nama pasangan sebelumnya",
+             True, {"show_when": {"field": "status_calon", "in": ["Duda", "Janda"]}}),
+            # N.6 (Ket. Kematian Suami/Istri Terdahulu) fields -- only shown
             # when sebab_cerai == "Cerai Mati" (ALUR_PENGISIAN_NA.md poin 3/4).
-            ("bin_binti_pasangan_terdahulu", "Bin/Binti Pasangan Terdahulu", "text", None, "jika diketahui", False, None),
-            ("nik_pasangan_terdahulu", "NIK Pasangan Terdahulu", "text", None, "16 digit NIK, jika diketahui", False, None),
-            ("tempat_lahir_pasangan_terdahulu", "Tempat Lahir Pasangan Terdahulu", "text", None, "mis. Bogor", False, None),
-            ("tanggal_lahir_pasangan_terdahulu", "Tanggal Lahir Pasangan Terdahulu", "date", None, None, False, None),
-            ("pekerjaan_pasangan_terdahulu", "Pekerjaan Pasangan Terdahulu (Semasa Hidup)", "text", None, "mis. Wiraswasta", False, None),
-            ("alamat_pasangan_terdahulu", "Alamat Pasangan Terdahulu (Semasa Hidup)", "text", None, "alamat lengkap", False, None),
-            ("tanggal_meninggal_pasangan_terdahulu", "Tanggal Meninggal Pasangan Terdahulu", "date", None, None, False, None),
-            ("tempat_meninggal_pasangan_terdahulu", "Tempat Meninggal Pasangan Terdahulu", "text", None, "mis. RSUD Cibinong", False, None),
+            ("bin_binti_pasangan_terdahulu", "Bin/Binti Pasangan Terdahulu", "text", None, "jika diketahui",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("nik_pasangan_terdahulu", "NIK Pasangan Terdahulu", "text", None, "16 digit NIK",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("tempat_lahir_pasangan_terdahulu", "Tempat Lahir Pasangan Terdahulu", "text", None, "mis. Bogor",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("tanggal_lahir_pasangan_terdahulu", "Tanggal Lahir Pasangan Terdahulu", "date", None, None,
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("pekerjaan_pasangan_terdahulu", "Pekerjaan Pasangan Terdahulu (Semasa Hidup)", "text", None, "mis. Wiraswasta",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("alamat_pasangan_terdahulu", "Alamat Pasangan Terdahulu (Semasa Hidup)", "text", None, "alamat lengkap",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("tanggal_meninggal_pasangan_terdahulu", "Tanggal Meninggal Pasangan Terdahulu", "date", None, None,
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
+            ("tempat_meninggal_pasangan_terdahulu", "Tempat Meninggal Pasangan Terdahulu", "text", None, "mis. RSUD Cibinong",
+             True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
             ("nama_ayah", "Nama Ayah Kandung", "text", None, "nama ayah", True, None),
             ("nik_ayah", "NIK Ayah Kandung", "text", None, "16 digit NIK ayah", True, None),
             ("tempat_lahir_ayah", "Tempat Lahir Ayah", "text", None, "mis. Bogor", True, None),

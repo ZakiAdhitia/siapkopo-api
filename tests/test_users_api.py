@@ -49,7 +49,7 @@ async def test_create_user_by_kades_succeeds(client, db_session):
     resp = await client.post("/api/v1/users", json={
         "full_name": "Budi Bendahara Baru", "username": "bendahara_baru",
         "password": "rahasia123", "email": "bendahara.baru@example.test",
-        "position_id": position_id,
+        "phone": "081234500001", "position_id": position_id,
     }, headers=h)
 
     assert resp.status_code == 200
@@ -68,7 +68,7 @@ async def test_create_user_by_sekdes_for_kepala_desa_forbidden(client, db_sessio
     resp = await client.post("/api/v1/users", json={
         "full_name": "Calon Kepala Desa", "username": "calon_kades",
         "password": "rahasia123", "email": "calon.kades@example.test",
-        "position_id": position_id,
+        "phone": "081234500002", "position_id": position_id,
     }, headers=h)
 
     assert resp.status_code == 403

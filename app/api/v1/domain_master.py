@@ -5,12 +5,18 @@ it for the universal Resident master data) rather than a new permission
 code -- these tables are just that same "master data" concept, split per
 letter type (see app/models/master.py's module docstring).
 """
+import io
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
-from app.dependencies.auth import require_permission
+from app.dependencies.auth import CurrentUser, require_permission
+from app.repositories.auth import UserRepository
+from app.services.audit_log import AuditLogService
 from app.dependencies.pagination import PaginationParams, pagination_params
 from app.schemas.common import Page, build_page
 from app.schemas.domain_master import (
@@ -25,6 +31,7 @@ from app.schemas.domain_master import (
     MasterUHCRead,
 )
 from app.services.domain_master import (
+    DOMAIN_MASTER_SERVICES,
     MasterDomisiliService,
     MasterKelahiranService,
     MasterKematianService,
@@ -34,9 +41,30 @@ from app.services.domain_master import (
     MasterSKUService,
     MasterUbahDataService,
     MasterUHCService,
+    export_domain_master_excel,
 )
 
 router = APIRouter(tags=["domain-master-data"])
+
+
+@router.get("/master-data/export")
+async def export_domain_master(
+    jenis: str = Query(..., description="|".join(DOMAIN_MASTER_SERVICES)),
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("resident:export")),
+) -> StreamingResponse:
+    """Export one domain master-data table (KK/domisili/NA/.../ubah_data) as
+    an xlsx download (HASIL_UJICOBA_PERROLE.md, kades item 5)."""
+    data = await export_domain_master_excel(session, jenis)
+    actor = await UserRepository(session).get_by_id(UUID(current.id))
+    await AuditLogService(session).record(
+        actor, "export", f"Export master data '{jenis}' ke Excel", entity_type="master_data",
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=master-{jenis}.xlsx"},
+    )
 
 
 @router.get("/master-domisili", response_model=Envelope[Page[MasterDomisiliRead]])
