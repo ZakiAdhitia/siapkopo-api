@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.master import VillageProfile
-from app.models.portal import GalleryPhoto, NewsPost, OrgMember
+from app.models.portal import GalleryPhoto, NewsPost
 from app.services.master import VillageProfileService, _CrudService
 
 
@@ -20,13 +20,6 @@ class GalleryPhotoService(_CrudService):
 
     model = GalleryPhoto
     name = "Foto Galeri"
-
-
-class OrgMemberService(_CrudService):
-    """CRUD service for OrgMember."""
-
-    model = OrgMember
-    name = "Struktur Organisasi"
 
 
 class PortalPublicService:
@@ -50,13 +43,5 @@ class PortalPublicService:
             select(GalleryPhoto)
             .where(GalleryPhoto.deleted_at.is_(None))
             .order_by(GalleryPhoto.order_index.asc())
-        )
-        return list((await self.session.scalars(stmt)).all())
-
-    async def organization(self) -> list[OrgMember]:
-        stmt = (
-            select(OrgMember)
-            .where(OrgMember.deleted_at.is_(None))
-            .order_by(OrgMember.order_index.asc())
         )
         return list((await self.session.scalars(stmt)).all())

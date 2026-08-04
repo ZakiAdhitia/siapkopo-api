@@ -34,7 +34,7 @@ async def test_news_crud_and_public_read(client):
 
 
 @pytest.mark.asyncio
-async def test_gallery_and_organization_ordering_via_public_read(client):
+async def test_gallery_ordering_via_public_read(client):
     h = await _headers(client, "kades", "kades123")
     await client.post("/api/v1/portal/gallery", json={
         "photo_path": "gallery/2.jpg", "order_index": 2,
@@ -42,20 +42,11 @@ async def test_gallery_and_organization_ordering_via_public_read(client):
     await client.post("/api/v1/portal/gallery", json={
         "photo_path": "gallery/1.jpg", "order_index": 1,
     }, headers=h)
-    await client.post("/api/v1/portal/organization", json={
-        "jabatan": "Sekretaris", "nama": "Dewi", "order_index": 2,
-    }, headers=h)
-    await client.post("/api/v1/portal/organization", json={
-        "jabatan": "Kepala Desa", "nama": "Wiwin", "order_index": 1,
-    }, headers=h)
 
     gallery = await client.get("/api/v1/public/portal/gallery")
     assert [g["order_index"] for g in gallery.json()["data"]] == sorted(
         g["order_index"] for g in gallery.json()["data"]
     )
-
-    org = await client.get("/api/v1/public/portal/organization")
-    assert org.json()["data"][0]["jabatan"] == "Kepala Desa"
 
 
 @pytest.mark.asyncio

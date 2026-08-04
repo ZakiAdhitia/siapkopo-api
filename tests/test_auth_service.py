@@ -99,9 +99,8 @@ async def test_permissions_for_unions_role_and_position(seeded_session):
 
     # Directly attach an extra permission to Position "rt" and confirm the
     # union picks it up without going through the Role at all. Uses a
-    # placeholder code, not a real seeded one (e.g. "lapduk:manage_own" is
-    # now an actually-seeded Position permission since the LAPDUK rework
-    # part shipped -- reusing it here would collide on insert).
+    # placeholder code rather than a real seeded one, to avoid colliding
+    # with an actual Position permission on insert.
     position = await seeded_session.scalar(
         select(Position).where(Position.slug == "rt")
     )

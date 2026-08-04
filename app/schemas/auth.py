@@ -111,8 +111,9 @@ class MeData(BaseModel):
     email: str | None = None
     phone: str | None = None
     position_name: str | None = None
-    # Needed by the Lapduk screen: RT users default-select their own RT, RW
-    # users see the RTs under their own RW (they lack rt:manage/rw:manage,
-    # so they can't call GET /rt themselves to discover this).
+    # Which RT/RW this account is scoped to, for users whose Position is
+    # "rt"/"rw" (set at account creation, see UserRole.jsx) -- they lack
+    # rt:manage/rw:manage, so they can't call GET /rt themselves to
+    # discover this on their own.
     rt_id: UUID | None = None
     rw_id: UUID | None = None

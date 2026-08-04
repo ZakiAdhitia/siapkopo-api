@@ -12,9 +12,6 @@ from app.dependencies.auth import require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
 from app.schemas.common import Page, build_page
 from app.schemas.master import (
-    DusunCreate,
-    DusunRead,
-    DusunUpdate,
     FamilyCardCreate,
     FamilyCardRead,
     FamilyCardUpdate,
@@ -34,7 +31,6 @@ from app.schemas.master import (
 from app.models.master import RT, RW, FamilyCard
 from app.services.excel import ResidentExcelService
 from app.services.master import (
-    DusunService,
     FamilyCardService,
     RTService,
     RWService,
@@ -86,63 +82,6 @@ async def update_village_profile(
     return success_response(VillageProfileRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
 
 
-# ---- Dusun ----
-@router.post("/dusun", response_model=Envelope[DusunRead])
-async def create_dusun(
-    body: DusunCreate,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("dusun:manage")),
-) -> dict:
-    """Create a new dusun."""
-    obj = await DusunService(session).create(body.model_dump(exclude_unset=True))
-    return success_response(DusunRead.model_validate(obj).model_dump(mode="json"), "Tersimpan")
-
-
-@router.get("/dusun", response_model=Envelope[Page[DusunRead]])
-async def list_dusun(
-    session: AsyncSession = Depends(get_db),
-    p: PaginationParams = Depends(pagination_params),
-    _=Depends(require_permission("dusun:manage")),
-) -> dict:
-    """List dusun, paginated."""
-    items, total = await DusunService(session).list(p.page, p.size)
-    return success_response(build_page(items, total, p.page, p.size, DusunRead))
-
-
-@router.get("/dusun/{item_id}", response_model=Envelope[DusunRead])
-async def get_dusun(
-    item_id: UUID,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("dusun:manage")),
-) -> dict:
-    """Get a single dusun by id."""
-    obj = await DusunService(session).get_or_404(item_id)
-    return success_response(DusunRead.model_validate(obj).model_dump(mode="json"))
-
-
-@router.put("/dusun/{item_id}", response_model=Envelope[DusunRead])
-async def update_dusun(
-    item_id: UUID,
-    body: DusunUpdate,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("dusun:manage")),
-) -> dict:
-    """Update a dusun."""
-    obj = await DusunService(session).update(item_id, body.model_dump(exclude_unset=True))
-    return success_response(DusunRead.model_validate(obj).model_dump(mode="json"), "Diperbarui")
-
-
-@router.delete("/dusun/{item_id}", response_model=Envelope[None])
-async def delete_dusun(
-    item_id: UUID,
-    session: AsyncSession = Depends(get_db),
-    _=Depends(require_permission("dusun:manage")),
-) -> dict:
-    """Soft-delete a dusun."""
-    await DusunService(session).delete(item_id)
-    return success_response(None, "Dihapus")
-
-
 # ---- RW ----
 @router.post("/rw", response_model=Envelope[RWRead])
 async def create_rw(
@@ -159,7 +98,7 @@ async def create_rw(
 async def list_rw(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
-    _=Depends(require_permission("rw:manage")),
+    _=Depends(require_permission("rw:read")),
 ) -> dict:
     """List RW, paginated."""
     items, total = await RWService(session).list(p.page, p.size)
@@ -216,7 +155,7 @@ async def create_rt(
 async def list_rt(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
-    _=Depends(require_permission("rt:manage")),
+    _=Depends(require_permission("rt:read")),
 ) -> dict:
     """List RT, paginated."""
     items, total = await RTService(session).list(p.page, p.size)

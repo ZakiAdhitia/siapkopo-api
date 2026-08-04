@@ -57,24 +57,3 @@ class GalleryPhotoRead(_Read):
     photo_path: str
     caption: str | None = None
     order_index: int
-
-
-class OrgMemberCreate(BaseModel):
-    jabatan: str = Field(min_length=1, max_length=150)
-    nama: str = Field(min_length=1, max_length=150)
-    order_index: int = 0
-    photo_path: str | None = None
-
-
-class OrgMemberUpdate(BaseModel):
-    jabatan: str | None = None
-    nama: str | None = None
-    order_index: int | None = None
-    photo_path: str | None = None
-
-
-class OrgMemberRead(_Read):
-    jabatan: str
-    nama: str
-    order_index: int
-    photo_path: str | None = None

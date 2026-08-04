@@ -71,15 +71,10 @@ async def test_village_profile_update_requires_permission(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_dusun_rw_rt_family_card_crud(client):
+async def test_rw_rt_family_card_crud(client):
     h = await _auth_headers(client)
 
-    dusun = await client.post("/api/v1/dusun", json={"name": "Krajan"}, headers=h)
-    assert dusun.status_code == 200
-    did = dusun.json()["data"]["id"]
-    assert (await client.get(f"/api/v1/dusun/{did}", headers=h)).json()["data"]["name"] == "Krajan"
-
-    rw = await client.post("/api/v1/rw", json={"dusun_id": did, "number": "001"}, headers=h)
+    rw = await client.post("/api/v1/rw", json={"number": "001"}, headers=h)
     assert rw.status_code == 200
     rw_id = rw.json()["data"]["id"]
 
@@ -96,7 +91,6 @@ async def test_dusun_rw_rt_family_card_crud(client):
     fc_id = fc.json()["data"]["id"]
 
     for path, item_id, update_body in [
-        ("dusun", did, {"name": "Krajan Baru"}),
         ("rw", rw_id, {"number": "003"}),
         ("rt", rt_id, {"number": "004"}),
         ("family-cards", fc_id, {"address": "Jl Melati"}),

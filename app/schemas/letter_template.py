@@ -21,6 +21,7 @@ class TemplateFieldCreate(BaseModel):
     placeholder: str | None = None
     is_required: bool = True
     validation_rules: dict | None = None
+    is_staff_only: bool = False
 
 
 class TemplateFieldUpdate(BaseModel):
@@ -32,6 +33,7 @@ class TemplateFieldUpdate(BaseModel):
     placeholder: str | None = None
     is_required: bool | None = None
     validation_rules: dict | None = None
+    is_staff_only: bool | None = None
 
 
 class TemplateFieldRead(_Read):
@@ -44,6 +46,7 @@ class TemplateFieldRead(_Read):
     placeholder: str | None = None
     is_required: bool
     validation_rules: dict | None = None
+    is_staff_only: bool
 
 
 class LetterTemplateCreate(BaseModel):
@@ -55,6 +58,7 @@ class LetterTemplateCreate(BaseModel):
     color_fg: str
     is_active: bool = True
     required_documents: list[str] = Field(default_factory=list)
+    optional_documents: list[str] = Field(default_factory=list)
     # Conditional Sub-Category Form (Bagian 4.2, STRATEGI doc): both null
     # means required_documents above is used as-is (every non-KK template
     # today). See app/models/letter_template.py for the full explanation.
@@ -65,6 +69,7 @@ class LetterTemplateCreate(BaseModel):
     pdf_body_template: str
     output_category: LetterOutputCategory = LetterOutputCategory.DESA_DIRECT
     post_issuance_note: str | None = None
+    sub_documents: list[dict] | None = None
 
 
 class LetterTemplateUpdate(BaseModel):
@@ -75,6 +80,7 @@ class LetterTemplateUpdate(BaseModel):
     color_fg: str | None = None
     is_active: bool | None = None
     required_documents: list[str] | None = None
+    optional_documents: list[str] | None = None
     category_field_key: str | None = None
     required_documents_by_category: dict[str, list[str]] | None = None
     numbering_prefix: str | None = None
@@ -82,6 +88,7 @@ class LetterTemplateUpdate(BaseModel):
     pdf_body_template: str | None = None
     output_category: LetterOutputCategory | None = None
     post_issuance_note: str | None = None
+    sub_documents: list[dict] | None = None
 
 
 class LetterTemplateRead(_Read):
@@ -93,6 +100,7 @@ class LetterTemplateRead(_Read):
     color_fg: str
     is_active: bool
     required_documents: list[str]
+    optional_documents: list[str]
     category_field_key: str | None = None
     required_documents_by_category: dict[str, list[str]] | None = None
     numbering_prefix: str
@@ -100,6 +108,7 @@ class LetterTemplateRead(_Read):
     pdf_body_template: str
     output_category: LetterOutputCategory
     post_issuance_note: str | None = None
+    sub_documents: list[dict] | None = None
 
 
 class ReorderFieldsRequest(BaseModel):

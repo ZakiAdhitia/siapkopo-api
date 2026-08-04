@@ -16,8 +16,9 @@ from app.models.auth import User
 from app.schemas.common import Page
 from app.schemas.submission import (
     ApplicantDataCompleteRequest, ApplicantDataRead, ApplicantLookupRead,
-    SubmissionApproveRequest, SubmissionAttachmentRead, SubmissionCreate, SubmissionRead,
-    SubmissionRejectRequest, SubmissionStatusHistoryRead, SubmissionWalkinCreate,
+    SubmissionAnswersUpdateRequest, SubmissionApproveRequest, SubmissionAttachmentRead,
+    SubmissionCreate, SubmissionRead, SubmissionRejectRequest, SubmissionStatusHistoryRead,
+    SubmissionWalkinCreate,
 )
 from app.services.submission import SubmissionService
 
@@ -48,6 +49,14 @@ async def _submission_read(session: AsyncSession, obj) -> dict:
     data["applicant_alamat"] = applicant["alamat"]
     data["applicant_no_kk"] = applicant["no_kk"]
     data["applicant_in_master_data"] = obj.applicant_resident_id is not None
+    data["applicant_resident_id"] = obj.applicant_resident_id
+    data["applicant_jk"] = applicant.get("jk")
+    data["applicant_tempat_lahir"] = applicant.get("tempat_lahir")
+    data["applicant_tanggal_lahir"] = applicant.get("tanggal_lahir")
+    data["applicant_pekerjaan"] = applicant.get("pekerjaan")
+    data["applicant_status_kawin"] = applicant.get("status_kawin")
+    data["applicant_rt_id"] = applicant.get("rt_id")
+    data["missing_staff_fields"] = await service.get_missing_staff_fields(obj)
     attachments = await service.list_attachments(obj.id)
     data["attachments"] = [
         SubmissionAttachmentRead.model_validate(a).model_dump(mode="json") for a in attachments
@@ -208,6 +217,22 @@ async def reject_submission(
     return success_response(await _submission_read(session, obj), "Ditolak")
 
 
+@router.post("/submissions/{submission_id}/regenerate-pdf", response_model=Envelope[SubmissionRead])
+async def regenerate_submission_pdf(
+    submission_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:approve")),
+) -> dict:
+    """Re-render an already-issued submission's PDF from its current data,
+    overwriting the stored file(s) -- a separate, deliberate action from
+    "Setujui" so staff can refresh the frozen PDF after correcting data
+    post-issuance without re-running the approval flow (and without
+    accidentally triggering it by re-clicking Setujui)."""
+    user = await _load_user(session, current)
+    obj = await SubmissionService(session).regenerate_pdf(submission_id, user)
+    return success_response(await _submission_read(session, obj), "PDF berhasil digenerate ulang")
+
+
 @router.get("/submissions/{submission_id}/history", response_model=Envelope[list[SubmissionStatusHistoryRead]])
 async def get_submission_history(
     submission_id: UUID,
@@ -232,13 +257,30 @@ async def complete_applicant_data(
     session: AsyncSession = Depends(get_db),
     _current: CurrentUser = Depends(require_permission("submission:approve")),
 ) -> dict:
-    """Staff fills in master-data fields (No. KK, RT) for a guest submission
-    whose NIK wasn't already on file -- applied to residents/family_cards
-    once this submission is approved (Bagian 5, Master Data rework)."""
+    """Staff fills in master-data fields (No. KK, RT, identity snapshot) for
+    a guest submission whose NIK wasn't already on file -- applied to
+    residents/family_cards once this submission is approved (Bagian 5,
+    Master Data rework)."""
     obj = await SubmissionService(session).complete_applicant_data(
-        submission_id, body.no_kk, body.rt_id
+        submission_id, body.no_kk, body.rt_id,
+        body.jk, body.tempat_lahir, body.tanggal_lahir, body.pekerjaan, body.status_kawin,
+        body.alamat,
     )
     return success_response(await _submission_read(session, obj), "Data pemohon diperbarui")
+
+
+@router.put("/submissions/{submission_id}/answers", response_model=Envelope[SubmissionRead])
+async def update_submission_answers(
+    submission_id: UUID,
+    body: SubmissionAnswersUpdateRequest,
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:approve")),
+) -> dict:
+    """Staff correction of a pending submission's own "Data Formulir" answers
+    (e.g. a typo the citizen made) -- only while still pending, re-validated
+    against the template's field rules exactly like a fresh submission."""
+    obj = await SubmissionService(session).update_answers(submission_id, body.answers)
+    return success_response(await _submission_read(session, obj), "Data formulir diperbarui")
 
 
 @router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")
@@ -275,3 +317,22 @@ async def download_submission_pdf(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="surat-{submission_id}.pdf"'},
     )
+
+
+@router.get("/submissions/{submission_id}/pdf/{sub_doc_code}")
+async def download_submission_sub_doc_pdf(
+    submission_id: UUID,
+    sub_doc_code: str,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:download")),
+) -> StreamingResponse:
+    """Download a specific sub-document PDF for an issued submission (e.g. NA sub-documents)."""
+    from uuid import UUID as _UUID
+    pdf_bytes = await SubmissionService(session).download_sub_document_pdf(
+        submission_id, sub_doc_code, _UUID(current.id), current.permissions
+    )
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{sub_doc_code}-{submission_id}.pdf"'},
+    )
+

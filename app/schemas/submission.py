@@ -1,5 +1,5 @@
 """Schemas for approval-step config, submissions, history, and attachments."""
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,13 +62,33 @@ class SubmissionApproveRequest(BaseModel):
     note: str | None = None
 
 
+class SubmissionAnswersUpdateRequest(BaseModel):
+    """Staff correction of a pending submission's own form answers."""
+
+    answers: dict = Field(default_factory=dict)
+
+
 class ApplicantDataCompleteRequest(BaseModel):
     """Staff-supplied master-data completion for a guest submission whose NIK
     wasn't already on file (Bagian 5, Master Data rework) -- entered from the
-    submission detail page, applied to residents/family_cards on approval."""
+    submission detail page, applied to residents/family_cards on approval.
+
+    jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin (2026-08-02 fix):
+    the shared identity snapshot every PDF reads via _applicant_data_from_
+    resident -- captured here because there's no Resident row to edit via
+    the separate "Data Identitas Warga" panel until issuance materializes
+    one from these same fields (SubmissionService._materialize_pending_
+    applicant).
+    """
 
     no_kk: str | None = Field(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$")
     rt_id: UUID | None = None
+    alamat: str | None = None
+    jk: str | None = None
+    tempat_lahir: str | None = None
+    tanggal_lahir: date | None = None
+    pekerjaan: str | None = None
+    status_kawin: str | None = None
 
 
 class SubmissionAttachmentRead(_Read):
@@ -103,6 +123,11 @@ class SubmissionRead(_Read):
     # approved (see SubmissionService._issue).
     pending_applicant_no_kk: str | None = None
     pending_applicant_rt_id: UUID | None = None
+    pending_applicant_jk: str | None = None
+    pending_applicant_tempat_lahir: str | None = None
+    pending_applicant_tanggal_lahir: date | None = None
+    pending_applicant_pekerjaan: str | None = None
+    pending_applicant_status_kawin: str | None = None
     # Populated by the router (not the ORM object) from resolve_applicant_data
     # -- staff/admin reviewing a submission need to see who it's for and
     # verify their identity (nik/alamat) before approving.
@@ -114,6 +139,24 @@ class SubmissionRead(_Read):
     # already linked to a Resident row (master data). False means the
     # applicant-data/KK completion step is still pending for this NIK.
     applicant_in_master_data: bool = False
+    # Populated by the router: the linked Resident's id (None if not yet in
+    # master data) plus the shared identity snapshot fields every letter
+    # type's PDF reads (jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin,
+    # see _applicant_data_from_resident) -- lets the detail page offer a
+    # "Lengkapi Data Identitas Warga" panel (PUT /residents/{id}) instead of
+    # citizens seeing a blank PDF field with no way for staff to fix it.
+    applicant_resident_id: UUID | None = None
+    applicant_jk: str | None = None
+    applicant_tempat_lahir: str | None = None
+    applicant_tanggal_lahir: str | None = None
+    applicant_pekerjaan: str | None = None
+    applicant_status_kawin: str | None = None
+    applicant_rt_id: UUID | None = None
+    # Populated by the router: labels of is_staff_only TemplateFields still
+    # blank in `answers` -- approve() hard-blocks on this list server-side
+    # (SubmissionService._check_staff_only_fields_filled); surfaced here too
+    # so the detail page can warn and disable Approve before the click.
+    missing_staff_fields: list[str] = []
     # Populated by the router from SubmissionAttachment rows.
     attachments: list[SubmissionAttachmentRead] = []
 

@@ -48,8 +48,9 @@ def test_render_preview_returns_valid_pdf():
 def test_render_preview_number_uses_pattern():
     svc = TemplateRenderService()
     template = _template()
-    assert svc._preview_number(template) is not None
-    number = svc._preview_number(template)
+    renderer = svc._renderer(template)
+    assert renderer._preview_number(template) is not None
+    number = renderer._preview_number(template)
     assert number.startswith("470/1/Ds.Kopo/")
 
 
@@ -62,7 +63,8 @@ def test_render_preview_select_field_uses_first_option():
         is_required=True,
     )
     svc = TemplateRenderService()
-    assert svc._sample_data([field])["keperluan"] == "Beasiswa"
+    renderer = svc._renderer(template)
+    assert renderer._sample_data([field])["keperluan"] == "Beasiswa"
 
 
 def test_render_preview_blocks_external_resource_fetch_and_stays_fast():

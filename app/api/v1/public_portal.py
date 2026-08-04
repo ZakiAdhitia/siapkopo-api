@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.schemas.master import VillageProfileRead
-from app.schemas.portal import GalleryPhotoRead, NewsPostRead, OrgMemberRead
+from app.schemas.portal import GalleryPhotoRead, NewsPostRead
 from app.services.portal import PortalPublicService
 
 router = APIRouter(prefix="/public/portal", tags=["public-portal"])
@@ -33,10 +33,3 @@ async def list_public_gallery(session: AsyncSession = Depends(get_db)) -> dict:
     """Public gallery photos, ordered by order_index."""
     items = await PortalPublicService(session).gallery()
     return success_response([GalleryPhotoRead.model_validate(i).model_dump(mode="json") for i in items])
-
-
-@router.get("/organization", response_model=Envelope[list[OrgMemberRead]])
-async def list_public_organization(session: AsyncSession = Depends(get_db)) -> dict:
-    """Public organization structure, ordered by order_index."""
-    items = await PortalPublicService(session).organization()
-    return success_response([OrgMemberRead.model_validate(i).model_dump(mode="json") for i in items])

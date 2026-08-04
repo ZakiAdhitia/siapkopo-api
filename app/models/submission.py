@@ -2,9 +2,9 @@
 history, attachments, and per-template/year letter-number counters."""
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,7 @@ class HistoryAction(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     ISSUED = "issued"
+    PDF_REGENERATED = "pdf_regenerated"
 
 
 def _values_callable(enum_cls: type[enum.Enum]) -> list[str]:
@@ -87,6 +88,18 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     pending_applicant_rt_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("rt.id"), nullable=True
     )
+    # Staff-entered identity snapshot for a not-yet-materialized applicant
+    # (2026-08-02 fix): without these, a brand-new guest NIK's Resident row
+    # gets created blank at issuance (see _materialize_pending_applicant)
+    # and the PDF ships with permanently-empty jk/TTL/pekerjaan/status --
+    # nobody could fill them in beforehand since the Resident didn't exist
+    # yet to edit via the "Data Identitas Warga" panel. Carried over onto
+    # the new Resident row the same way pending_applicant_no_kk/rt_id are.
+    pending_applicant_jk: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pending_applicant_tempat_lahir: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pending_applicant_tanggal_lahir: Mapped[date | None] = mapped_column(Date, nullable=True)
+    pending_applicant_pekerjaan: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pending_applicant_status_kawin: Mapped[str | None] = mapped_column(String(30), nullable=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     physical_documents_promised: Mapped[bool] = mapped_column(default=False)
     status: Mapped[SubmissionStatus] = mapped_column(
@@ -96,6 +109,10 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     current_step_index: Mapped[int | None] = mapped_column(nullable=True, default=0)
     letter_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pdf_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # {sub_doc_code: storage_path}, populated at issuance for templates with
+    # sub_documents (e.g. NA's 5 documents) -- each sub-document is rendered
+    # and saved once at issuance instead of on every download request.
+    sub_document_storage_paths: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id"), nullable=True

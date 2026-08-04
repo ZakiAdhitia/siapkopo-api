@@ -32,13 +32,3 @@ class GalleryPhoto(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     photo_path: Mapped[str] = mapped_column(String(500))
     caption: Mapped[str | None] = mapped_column(String(255), nullable=True)
     order_index: Mapped[int] = mapped_column(default=0)
-
-
-class OrgMember(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """A row in the public village organization structure."""
-
-    __tablename__ = "org_members"
-    jabatan: Mapped[str] = mapped_column(String(150))
-    nama: Mapped[str] = mapped_column(String(150))
-    order_index: Mapped[int] = mapped_column(default=0)
-    photo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)

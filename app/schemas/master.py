@@ -52,20 +52,7 @@ class VillageProfileRead(_Read):
     luas_wilayah: str | None = None
 
 
-class DusunCreate(BaseModel):
-    name: str
-
-
-class DusunUpdate(BaseModel):
-    name: str | None = None
-
-
-class DusunRead(_Read):
-    name: str
-
-
 class RWCreate(BaseModel):
-    dusun_id: UUID
     number: str
 
 
@@ -74,7 +61,6 @@ class RWUpdate(BaseModel):
 
 
 class RWRead(_Read):
-    dusun_id: UUID
     number: str
 
 
@@ -118,6 +104,7 @@ class ResidentCreate(BaseModel):
     occupation: str | None = None
     phone: str | None = None
     address: str | None = None
+    marital_status: str | None = None
 
 
 class ResidentUpdate(BaseModel):
@@ -130,6 +117,7 @@ class ResidentUpdate(BaseModel):
     occupation: str | None = None
     phone: str | None = None
     address: str | None = None
+    marital_status: str | None = None
 
 
 class ResidentRead(_Read):
@@ -143,6 +131,7 @@ class ResidentRead(_Read):
     occupation: str | None = None
     phone: str | None = None
     address: str | None = None
+    marital_status: str | None = None
     # Populated by the router (not the ORM object): denormalized display
     # fields so resident:read (staff) doesn't need rt:manage/rw:manage/
     # family_card:manage (admin-only) just to show where someone lives --

@@ -11,13 +11,13 @@ from app.models.letter_template import (
     LetterTemplate,
     TemplateField,
 )
-from app.models.master import RT, RW, Dusun, Resident, VillageProfile
+from app.models.master import RT, RW, Resident, VillageProfile
 from app.models.submission import ApprovalStepConfig
 from app.permissions.registry import (
     DEMO_ACCOUNTS, PERMISSIONS, POSITION_DEFS, POSITION_PERMISSIONS,
     ROLE_DEFS, ROLE_PERMISSIONS,
 )
-from app.seed.data import DUSUN, RESIDENTS, VILLAGE
+from app.seed.data import RESIDENTS, VILLAGE
 from app.seed.letter_template_data import SURAT_TEMPLATES
 
 logger = get_logger("seed")
@@ -141,36 +141,27 @@ async def seed_village_profile(session: AsyncSession) -> None:
 
 
 async def seed_master(session: AsyncSession) -> None:
-    """Seed the dusun, RW/RT, and residents from mockData.
+    """Seed the RW/RT hierarchy and residents from mockData.
 
-    Idempotent: re-running keeps the dusun singletons and skips any
+    Idempotent: re-running keeps the RW/RT singletons and skips any
     resident whose synthetic NIK already exists.
     """
-    dusun_map = {d.name: d for d in (await session.scalars(select(Dusun))).all()}
-    for name in DUSUN:
-        if name not in dusun_map:
-            d = Dusun(name=name)
-            session.add(d)
-            dusun_map[name] = d
-    await session.flush()
-
-    # Build RW/RT lazily keyed by (dusun, rw) and (rw_obj.id, rt).
-    rw_cache: dict[tuple[str, str], RW] = {}
+    # Build RW/RT lazily keyed by rw number and (rw_obj.id, rt number).
+    rw_map = {rw.number: rw for rw in (await session.scalars(select(RW))).all()}
     rt_cache: dict[tuple, RT] = {}
     existing_niks = {r.nik for r in (await session.scalars(select(Resident))).all()}
     created = 0
-    for nik_suffix, name, _kk, dusun_name, rt_no, rw_no in RESIDENTS:
+    for nik_suffix, name, _kk, rt_no, rw_no in RESIDENTS:
         # Synthetic resident NIK, intentionally distinct from demo-user NIKs.
         nik = f"3516{nik_suffix.zfill(12)[:12]}"
         if nik in existing_niks:
             continue
-        dusun = dusun_map[dusun_name]
-        rw = rw_cache.get((dusun_name, rw_no))
+        rw = rw_map.get(rw_no)
         if rw is None:
-            rw = RW(dusun_id=dusun.id, number=rw_no)
+            rw = RW(number=rw_no)
             session.add(rw)
             await session.flush()
-            rw_cache[(dusun_name, rw_no)] = rw
+            rw_map[rw_no] = rw
         rt = rt_cache.get((rw.id, rt_no))
         if rt is None:
             rt = RT(rw_id=rw.id, number=rt_no)
@@ -185,7 +176,7 @@ async def seed_master(session: AsyncSession) -> None:
 
 
 async def seed_letter_templates(session: AsyncSession) -> None:
-    """Seed the 11 letter templates (with fields) from mockData's suratTypes.
+    """Seed the 9 letter templates (with fields) from mockData's suratTypes.
 
     Idempotent: skips any template whose code already exists.
     """
@@ -205,22 +196,27 @@ async def seed_letter_templates(session: AsyncSession) -> None:
             color_fg=entry["color_fg"],
             is_active=entry.get("is_active", True),
             required_documents=entry["required_documents"],
+            optional_documents=entry.get("optional_documents", []),
             numbering_prefix=entry["numbering_prefix"],
-            numbering_pattern="{prefix}/{seq}/Ds.Kopo/{year}",
+            numbering_pattern=entry.get("numbering_pattern", "{prefix}/{seq}/Ds.Kopo/{year}"),
             pdf_body_template=entry["pdf_body_template"],
             output_category=LetterOutputCategory(entry["output_category"]),
             category_field_key=entry.get("category_field_key"),
             required_documents_by_category=entry.get("required_documents_by_category"),
+            post_issuance_note=entry.get("post_issuance_note"),
+            sub_documents=entry.get("sub_documents"),
         )
         session.add(template)
         await session.flush()
-        for order_index, (key, label, ftype, options, placeholder, required, rules) in enumerate(
-            entry["fields"]
-        ):
+        for order_index, field_tuple in enumerate(entry["fields"]):
+            # 8th element (is_staff_only) is optional -- defaults False, so
+            # every pre-existing 7-tuple field definition still works as-is.
+            key, label, ftype, options, placeholder, required, rules, *rest = field_tuple
             session.add(TemplateField(
                 template_id=template.id, order_index=order_index, field_key=key,
                 label=label, field_type=FieldType(ftype), options=options,
                 placeholder=placeholder, is_required=required, validation_rules=rules,
+                is_staff_only=rest[0] if rest else False,
             ))
         created += 1
     await session.commit()

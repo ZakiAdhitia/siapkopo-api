@@ -23,6 +23,7 @@ COLUMNS = [
     "occupation",
     "phone",
     "address",
+    "marital_status",
 ]
 
 
@@ -74,6 +75,7 @@ class ResidentExcelService:
                         occupation=(record.get("occupation") or None),
                         phone=(str(record["phone"]) if record.get("phone") else None),
                         address=(record.get("address") or None),
+                        marital_status=(record.get("marital_status") or None),
                     )
                 imported += 1
             except Exception as exc:  # row-level failure isolated
@@ -100,6 +102,7 @@ class ResidentExcelService:
                     r.occupation,
                     r.phone,
                     r.address,
+                    r.marital_status,
                 ]
             )
         buf = io.BytesIO()

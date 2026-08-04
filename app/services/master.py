@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
-from app.models.master import RT, RW, Dusun, FamilyCard, Resident, VillageProfile
+from app.models.master import RT, RW, FamilyCard, Resident, VillageProfile
 from app.repositories.base import BaseRepository
 
 logger = get_logger("master")
@@ -97,13 +97,6 @@ class VillageProfileService:
         await self.session.commit()
         logger.info("VillageProfile updated id=%s", obj.id)
         return obj
-
-
-class DusunService(_CrudService):
-    """CRUD service for Dusun."""
-
-    model = Dusun
-    name = "Dusun"
 
 
 class RWService(_CrudService):

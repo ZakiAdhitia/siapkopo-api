@@ -24,11 +24,13 @@ class LetterOutputCategory(str, enum.Enum):
 
     DESA_DIRECT letters are final once issued by the village. DUKCAPIL_PENGANTAR
     letters are a cover form the applicant must still take to Kecamatan/Disdukcapil
-    for further processing.
+    for further processing. KUA_PENGANTAR is the same idea but for NA (marriage
+    recommendation) letters, which the applicant takes to the KUA instead.
     """
 
     DESA_DIRECT = "desa_direct"
     DUKCAPIL_PENGANTAR = "dukcapil_pengantar"
+    KUA_PENGANTAR = "kua_pengantar"
 
 
 class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -47,6 +49,12 @@ class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     color_fg: Mapped[str] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(default=True)
     required_documents: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Optional attachments (PERBAIKAN_INPUT_DAN_LAMPIRAN_SURAT.MD, 2026-08-02):
+    # documents marked "(Bila Ada)" -- may be uploaded but never block
+    # submission if skipped. Unlike required_documents, guest/attachment
+    # validation only rejects a label that's in NEITHER list; every
+    # optional_documents label is always allowed, never required.
+    optional_documents: Mapped[list[str]] = mapped_column(JSON, default=list)
     # Conditional Sub-Category Form (Bagian 4.2, STRATEGI doc): when set,
     # required documents vary by the value of one dynamic field instead of
     # being a fixed list -- e.g. KK's 5 permohonan categories (Baru,
@@ -71,6 +79,12 @@ class LetterTemplate(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=LetterOutputCategory.DESA_DIRECT,
     )
     post_issuance_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Multi-sub-document letters (e.g. NA's N.1/N.4/N.5 + 2 supporting
+    # letters, all from one submission's answers): list of {code, name}.
+    # Null/empty means "single document", the default for every other
+    # template. Drives which sub-document download buttons the admin/loket
+    # screens render (see TemplateRenderService.render_issued_sub_document).
+    sub_documents: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
 
 
 class TemplateField(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -97,3 +111,8 @@ class TemplateField(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     placeholder: Mapped[str | None] = mapped_column(String(150), nullable=True)
     is_required: Mapped[bool] = mapped_column(default=True)
     validation_rules: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Filled in by staff/admin while processing (e.g. SKTM's DTKS
+    # registration check, MASTER_COLUMN_LETTERS.md item 11) rather than
+    # asked of the citizen at submission -- hidden from the citizen-facing
+    # form, still editable via the staff "Data Formulir" edit view.
+    is_staff_only: Mapped[bool] = mapped_column(default=False)

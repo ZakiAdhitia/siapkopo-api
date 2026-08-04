@@ -42,10 +42,19 @@ async def list_public_templates(session: AsyncSession = Depends(get_db)) -> dict
 async def list_public_template_fields(
     template_id: UUID, session: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Dynamic form fields for one letter type, for the guest submission form."""
+    """Dynamic form fields for one letter type, for the guest submission form.
+
+    Staff-only fields (e.g. SKTM's DTKS check, MASTER_COLUMN_LETTERS.md item
+    11) are filled in later by staff via the submission detail page, not
+    asked of the citizen here -- excluded entirely, not just hidden client-
+    side, so a guest can't see or submit an answer for one either.
+    """
     fields = await LetterTemplateService(session).list_fields(template_id)
     return success_response(
-        [TemplateFieldRead.model_validate(f).model_dump(mode="json") for f in fields]
+        [
+            TemplateFieldRead.model_validate(f).model_dump(mode="json")
+            for f in fields if not f.is_staff_only
+        ]
     )
 
 
