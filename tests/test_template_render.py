@@ -7,7 +7,7 @@ import uuid
 
 def _profile():
     return VillageProfile(
-        id=uuid.uuid4(), name="Desa Kopo", kecamatan="Cisarua", kabupaten="Bogor", provinsi="Jawa Barat"
+        name="Desa Kopo", kecamatan="Cisarua", kabupaten="Bogor", provinsi="Jawa Barat"
     )
 
 

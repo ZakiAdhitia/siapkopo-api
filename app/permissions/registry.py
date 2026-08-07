@@ -3,17 +3,21 @@
 # Resource:action permission codes. Extend as new features arrive.
 PERMISSIONS: list[str] = [
     "auth:me",
-    "resident:create", "resident:read", "resident:update", "resident:delete",
-    "resident:import", "resident:export",
-    "village:manage", "rw:manage", "rt:manage", "rt:read", "rw:read",
-    "family_card:manage",
+    # 2026-08-06: resident:*/family_card:manage retired along with the
+    # Resident/FamilyCard tables (SISTEM_PENGOLAHAN_DATA_WARGA.md) --
+    # resident:read/export renamed to master_data:read/export (still gate
+    # the 9 kept domain-master tables' browsing/export, never Resident-
+    # specific to begin with in spirit), resident:update renamed to
+    # submission:edit_master_data (new meaning: fill a submission's staff
+    # master-data draft, not edit a standalone population registry row).
+    "master_data:read", "master_data:export",
+    "submission:edit_master_data",
+    "rw:manage", "rt:manage", "rt:read", "rw:read",
     "template:manage", "template:configure", "template:read",
     "submission:create", "submission:read", "submission:read_all",
     "submission:approve", "submission:reject", "submission:download", "submission:walkin",
-    "approval_config:manage",
     "user:manage",
     "dashboard:read",
-    "portal:manage",
     "attendance:create", "attendance:read_all",
     "audit:read",
 ]
@@ -22,31 +26,28 @@ PERMISSIONS: list[str] = [
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "warga": ["auth:me", "submission:create", "submission:read", "submission:download",
               "template:read"],
-    "staff": ["auth:me", "resident:read", "resident:create", "resident:update",
-              "resident:import", "resident:export", "template:read", "rt:read", "rw:read",
+    "staff": ["auth:me", "master_data:read", "master_data:export", "submission:edit_master_data",
+              "template:read", "rt:read", "rw:read",
               "submission:read", "submission:read_all", "submission:approve",
               "submission:reject", "submission:download", "submission:walkin",
               "dashboard:read", "attendance:create"],
-    # attendance:create, submission:approve/reject/walkin, and
-    # approval_config:manage deliberately NOT here -- Kepala Desa and
-    # Sekretaris Desa both hold this Role, but HASIL_UJICOBA_PERROLE.md
-    # (kades items 2/3/4) restricts Kepala Desa to VIEW-only across
-    # submissions, hides Mode Loket, and hides approval-flow config from
-    # them entirely; only Sekretaris Desa keeps these, granted per-Position
-    # below (same split as attendance:create). submission:read_all/download
+    # attendance:create and submission:approve/reject/walkin deliberately
+    # NOT here -- Kepala Desa and Sekretaris Desa both hold this Role, but
+    # HASIL_UJICOBA_PERROLE.md (kades items 2/3/4) restricts Kepala Desa to
+    # VIEW-only across submissions and hides Mode Loket from them entirely;
+    # only Sekretaris Desa keeps these, granted per-Position below (same
+    # split as attendance:create). submission:read_all/download
     # stay here since Kepala Desa still needs to see and print issued
     # letters, just not approve/reject/walk-in/edit them.
-    "admin": ["auth:me", "resident:read", "resident:update",
-              "resident:import", "resident:export",
-              "village:manage", "rw:manage", "rt:manage", "rt:read", "rw:read",
-              "family_card:manage",
+    "admin": ["auth:me", "master_data:read", "master_data:export", "submission:edit_master_data",
+              "rw:manage", "rt:manage", "rt:read", "rw:read",
               # template:manage (create template, add/edit/delete fields)
               # deliberately NOT here -- HASIL_UJICOBA_PERROLE.md sekdes item 1:
               # only toggling which templates are offered (template:configure)
               # and previewing/reading are allowed from this Role.
               "template:configure", "template:read",
               "submission:read", "submission:read_all", "submission:download",
-              "user:manage", "dashboard:read", "portal:manage",
+              "user:manage", "dashboard:read",
               "attendance:read_all", "audit:read"],
     "administrator-it": ["*"],
 }
@@ -79,7 +80,7 @@ POSITION_PERMISSIONS: dict[str, list[str]] = {
     "kepala_desa": [],
     "sekretaris_desa": [
         "attendance:create", "submission:approve", "submission:reject",
-        "submission:walkin", "approval_config:manage",
+        "submission:walkin",
     ],
     "bendahara_desa": [],
     "staff_desa": [],
@@ -89,9 +90,10 @@ POSITION_PERMISSIONS: dict[str, list[str]] = {
 }
 
 # Demo accounts mirrored from the frontend mockData.js `accounts` map, extended
-# with the new role/position dimensions. `link_resident_name` (RT/RW accounts
-# only) is resolved to a concrete rt_id/rw_id by seed.seed_link_demo_rt_rw
-# once master data (RT/RW rows) exists.
+# with the new role/position dimensions. An "rt"/"rw" Position identifies the
+# account's role in the hierarchy only -- it is not linked to any specific
+# RT/RW master-data row (User has no rt_id/rw_id; see the RBAC/master-data
+# simplification pass).
 DEMO_ACCOUNTS: list[dict] = [
     {"username": "warga", "password": "warga123", "full_name": "Siti Rohmah",
      "role": "warga", "position": "warga_desa", "nik": "3516064588020003",
@@ -113,10 +115,8 @@ DEMO_ACCOUNTS: list[dict] = [
      "email": "operator.it@example.test"},
     {"username": "rt001", "password": "rt123", "full_name": "Sugeng Riyadi",
      "role": "warga", "position": "rt", "nik": None,
-     "email": "sugeng.riyadi@example.test",
-     "link_resident_name": "Sugeng Riyadi"},
+     "email": "sugeng.riyadi@example.test"},
     {"username": "rw001", "password": "rw123", "full_name": "Ahmad Fauzi",
      "role": "warga", "position": "rw", "nik": None,
-     "email": "ahmad.fauzi@example.test",
-     "link_resident_name": "Ahmad Fauzi"},
+     "email": "ahmad.fauzi@example.test"},
 ]

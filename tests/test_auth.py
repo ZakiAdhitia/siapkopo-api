@@ -104,4 +104,4 @@ async def test_staf_permissions_are_concrete_db_codes(client):
     assert resp.status_code == 200
     perms = resp.json()["data"]["permissions"]
     assert "*" not in perms
-    assert "resident:read" in perms
+    assert "master_data:read" in perms

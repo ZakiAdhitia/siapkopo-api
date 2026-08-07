@@ -14,10 +14,18 @@ async def test_seed_letter_templates_idempotent(db_session):
     assert template_count == 9
 
     field_count = await db_session.scalar(select(func.count()).select_from(TemplateField))
-    # kk=3, domisili=12, usaha=6, lahir=22, mati=14, na=61 (52 + 9 N.6/sebab_cerai
-    # fields, 2026-08-03), uhc=23 (SKTM), pindah=12, ubah_data=4 (added 2026-08-03,
-    # F-1.06) (157)
-    assert field_count == 157
+    # kk=1 (06/08/2026 susulan: dropped jumlah_anggota_keluarga +
+    # keterangan_perubahan, was 3), domisili=12, usaha=6, lahir=22, mati=14,
+    # na=62 (NA restructure, 06/08/2026: added lokasi_akad (was 61); 8
+    # N.6-detail pasangan_terdahulu fields were briefly dropped then
+    # restored, gated to sebab_cerai=="Cerai Mati" only (Cerai Hidup still
+    # just needs the name) per the final 06/08/2026 decision -- needed to
+    # issue N.6), uhc=23 (SKTM), pindah=36 (F-1.03 restructure, 06/08/2026:
+    # alamat_asal/rt_asal/rw_asal + status_kk_tujuan + 7 numbered
+    # anggota_<n>_{nik,nama,shdk} slots replacing the old single free-text
+    # daftar_anggota_pindah, was 12), ubah_data=4 (added 2026-08-03, F-1.06)
+    # (180)
+    assert field_count == 180
 
     kk = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "kk"))
     assert kk.numbering_prefix == "474"
@@ -26,16 +34,30 @@ async def test_seed_letter_templates_idempotent(db_session):
         "Foto KTP-el Seluruh Anggota Keluarga yang Akan Terdaftar",
     ]
     assert kk.category_field_key == "status_perubahan"
-    # Categories corrected 2026-08-03 to match ALUR_PENGISIAN_KK.md's 5
-    # conditions ("Pindah Rumah dari Daerah Lain" and "Perubahan Data
-    # Biodata" are gone -- the latter is now the standalone "ubah_data"
-    # letter type below).
+    # Categories corrected 06/08/2026 (susulan) per HASIL_UJICOBA_PENGAJUAN_
+    # PER_SURAT.md's "Kartu Keluarga" item 2: each category's attachments are
+    # now self-contained/granular, and "KK Rusak atau Hilang" is split into
+    # two distinct status_perubahan options ("KK Rusak"/"KK Hilang") since
+    # ALUR_PENGISIAN_KK.md bagian C.4 requires different lampiran for each
+    # (no second-level category field invented -- reuses the same
+    # single-level category_field_key mechanism).
     assert set(kk.required_documents_by_category) == {
         "Baru Menikah (Pecah KK Mandiri)", "Ada Kelahiran Anak (Penambahan Anggota)",
         "Anggota Keluarga Meninggal Dunia (Pengurangan Anggota)",
-        "KK Rusak atau Hilang",
+        "KK Rusak", "KK Hilang",
         "Cerai Hidup (Pecah KK Mandiri Pasca Perceraian)",
     }
+    assert kk.required_documents_by_category["KK Rusak"] == [
+        "Foto Fisik Lembar KK Lama yang Rusak", "Foto KTP-el Kepala Keluarga (Asli)",
+    ]
+    assert kk.required_documents_by_category["KK Hilang"] == [
+        "Foto Surat Keterangan Kehilangan dari Polsek Setempat",
+        "Fotokopi KK Lama yang Hilang (jika ada)", "Foto KTP-el Kepala Keluarga",
+    ]
+    kk_fields = (await db_session.scalars(
+        select(TemplateField).where(TemplateField.template_id == kk.id)
+    )).all()
+    assert {f.field_key for f in kk_fields} == {"status_perubahan"}
 
     uhc = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "uhc"))
     assert uhc.name == "Surat Keterangan Tidak Mampu (SKTM)"
@@ -45,7 +67,10 @@ async def test_seed_letter_templates_idempotent(db_session):
             TemplateField.template_id == uhc.id, TemplateField.field_key == "terdaftar_dtks"
         )
     )
-    assert dtks_field.is_staff_only is True
+    # 2026-08-05 TAMBAHAN item 6: no more is_staff_only fields anywhere --
+    # warga self-reports it (optionally) at submission time instead of
+    # staff completing it afterward.
+    assert dtks_field.is_staff_only is False
 
     na = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "na"))
     assert {d["code"] for d in na.sub_documents} == {

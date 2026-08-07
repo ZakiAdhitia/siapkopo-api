@@ -1,10 +1,9 @@
-"""Submission domain models: approval step config, submissions, status
-history, attachments, and per-template/year letter-number counters."""
+"""Submission domain models: submissions, status history, and attachments."""
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,18 +33,6 @@ def _values_callable(enum_cls: type[enum.Enum]) -> list[str]:
     return [member.value for member in enum_cls]
 
 
-class ApprovalStepConfig(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """One ordered step in the global, configurable approval chain."""
-
-    __tablename__ = "approval_step_configs"
-    __table_args__ = (
-        UniqueConstraint("order_index", name="uq_approval_step_order"),
-    )
-
-    order_index: Mapped[int] = mapped_column()
-    role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"))
-
-
 class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     """A citizen's letter request, tracked through approval to issuance."""
 
@@ -59,13 +46,12 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id"), index=True, nullable=True
     )
-    # Who the letter is FOR, decoupled from who submitted it -- populated for
-    # guest submissions (resolved/auto-created by NIK) and, later, Mode Loket
-    # (staff submits on a resident's behalf). Null for a normal logged-in
-    # warga submission, where the applicant is resolved via the user instead.
-    applicant_resident_id: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("residents.id"), nullable=True
-    )
+    # 2026-08-06: the applicant is identified by NIK+nama stored directly on
+    # the submission -- no more persistent Resident registry (couldn't be
+    # kept up to date, per SISTEM_PENGOLAHAN_DATA_WARGA.md). Always required,
+    # every submission path (create/create_guest/create_walkin).
+    applicant_nik: Mapped[str] = mapped_column(String(20), index=True)
+    applicant_nama: Mapped[str] = mapped_column(String(150))
     # Guest-only contact for status notifications (no user account to read an
     # email from) and as an alternate lookup key for the no-login status
     # check (Bagian 8, STRATEGI doc rev. 2026-07-26). WhatsApp is stored as
@@ -73,33 +59,14 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # anywhere in this system; notifications still only go out by email.
     guest_contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_contact_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    # Raw applicant identity for a guest submission whose NIK had no existing
-    # Resident row at submit time (Bagian 5, Master Data rework: master data
-    # must NOT be written until this submission is approved). Null once
-    # applicant_resident_id is set -- either the NIK already existed at
-    # submit time, or the Resident was created from these fields at approval.
-    pending_applicant_nik: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    pending_applicant_nama: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    pending_applicant_alamat: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Staff-entered from the submission detail page, before/at approval --
-    # the "informasi nomor KK dll" that triggers the actual master-data
-    # insert at issuance time (see SubmissionService._issue).
-    pending_applicant_no_kk: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    pending_applicant_rt_id: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("rt.id"), nullable=True
-    )
-    # Staff-entered identity snapshot for a not-yet-materialized applicant
-    # (2026-08-02 fix): without these, a brand-new guest NIK's Resident row
-    # gets created blank at issuance (see _materialize_pending_applicant)
-    # and the PDF ships with permanently-empty jk/TTL/pekerjaan/status --
-    # nobody could fill them in beforehand since the Resident didn't exist
-    # yet to edit via the "Data Identitas Warga" panel. Carried over onto
-    # the new Resident row the same way pending_applicant_no_kk/rt_id are.
-    pending_applicant_jk: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    pending_applicant_tempat_lahir: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    pending_applicant_tanggal_lahir: Mapped[date | None] = mapped_column(Date, nullable=True)
-    pending_applicant_pekerjaan: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    pending_applicant_status_kawin: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Staff-entered from the submission detail page (PUT .../master-data),
+    # from the citizen's photographed KTP/KK -- alamat/rt_id/jk/tempat_lahir/
+    # tanggal_lahir/pekerjaan/status_kawin/no_kk. Blocking for Approve on
+    # letter types that need it (SubmissionService.get_missing_staff_fields,
+    # REQUIRED_STAFF_FIELDS_BY_JENIS). This is what feeds the per-letter-type
+    # domain-master tables (MasterDomisili etc.) now, replacing what used to
+    # be auto-derived from a Resident row.
+    staff_master_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     physical_documents_promised: Mapped[bool] = mapped_column(default=False)
     status: Mapped[SubmissionStatus] = mapped_column(
@@ -107,6 +74,9 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         default=SubmissionStatus.PENDING,
     )
     current_step_index: Mapped[int | None] = mapped_column(nullable=True, default=0)
+    # Left blank at issuance -- no automatic per-template/year sequence
+    # allocation; staff fill it in by hand at the desa office along with the
+    # signature (surat terbit belum ditandatangani).
     letter_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pdf_storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # {sub_doc_code: storage_path}, populated at issuance for templates with
@@ -153,18 +123,3 @@ class SubmissionAttachment(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     content_type: Mapped[str] = mapped_column(String(100))
     size_bytes: Mapped[int] = mapped_column()
     storage_path: Mapped[str] = mapped_column(String(500))
-
-
-class LetterNumberCounter(UUIDMixin, TimestampMixin, Base):
-    """Tracks the last allocated sequence number per (template, year)."""
-
-    __tablename__ = "letter_number_counters"
-    __table_args__ = (
-        UniqueConstraint("template_id", "year", name="uq_letter_number_counter_template_year"),
-    )
-
-    template_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("letter_templates.id"), index=True
-    )
-    year: Mapped[int] = mapped_column()
-    last_seq: Mapped[int] = mapped_column(default=0)

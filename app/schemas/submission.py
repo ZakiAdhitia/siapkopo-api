@@ -15,23 +15,35 @@ class _Read(BaseModel):
     id: UUID
 
 
-class ApprovalStepConfigRead(_Read):
-    order_index: int
-    role_id: UUID
-
-
-class ApprovalStepReplaceItem(BaseModel):
-    role_id: UUID
-
-
-class ApprovalStepsReplaceRequest(BaseModel):
-    steps: list[ApprovalStepReplaceItem] = Field(min_length=1)
-
-
 class SubmissionCreate(BaseModel):
     template_id: UUID
+    applicant_nik: str = Field(min_length=16, max_length=16, pattern=r"^\d{16}$")
+    applicant_nama: str = Field(min_length=1)
     answers: dict = Field(default_factory=dict)
     physical_documents_promised: bool = False
+
+
+class SubmissionMasterDataUpdateRequest(BaseModel):
+    """Staff-entered identity fields (from KTP/KK photo attachments),
+    generic across all letter types -- the same shape every PDF template
+    and domain-master row reads (SubmissionService.build_applicant_snapshot).
+    Full-replace semantics, same convention as SubmissionAnswersUpdateRequest."""
+
+    alamat: str | None = None
+    rt_id: UUID | None = None
+    jk: str | None = None
+    tempat_lahir: str | None = None
+    tanggal_lahir: date | None = None
+    pekerjaan: str | None = None
+    status_kawin: str | None = None
+    no_kk: str | None = None
+
+    @field_validator("tanggal_lahir")
+    @classmethod
+    def _tanggal_lahir_not_today_or_future(cls, value: date | None) -> date | None:
+        if value is not None and value >= date.today():
+            raise ValueError("Tanggal lahir tidak boleh hari ini atau di masa depan")
+        return value
 
 
 class SubmissionWalkinCreate(BaseModel):
@@ -39,19 +51,11 @@ class SubmissionWalkinCreate(BaseModel):
     walk-in citizen. Issued immediately -- no guest contact needed."""
 
     template_id: UUID
-    nik: str = Field(min_length=16, max_length=16, pattern=r"^\d{16}$")
+    applicant_nik: str = Field(min_length=16, max_length=16, pattern=r"^\d{16}$")
+    applicant_nama: str = Field(min_length=1)
     answers: dict = Field(default_factory=dict)
-    applicant_nama: str | None = None
-    applicant_alamat: str | None = None
-
-
-class ApplicantDataRead(BaseModel):
-    """Auto-fill data for the submission form: {nama, nik, alamat, no_kk}."""
-
-    nama: str
-    nik: str
-    alamat: str
-    no_kk: str
+    # Best-effort, not blocking -- see SubmissionService.create_walkin.
+    master_data: SubmissionMasterDataUpdateRequest | None = None
 
 
 class SubmissionRejectRequest(BaseModel):
@@ -68,36 +72,6 @@ class SubmissionAnswersUpdateRequest(BaseModel):
     answers: dict = Field(default_factory=dict)
 
 
-class ApplicantDataCompleteRequest(BaseModel):
-    """Staff-supplied master-data completion for a guest submission whose NIK
-    wasn't already on file (Bagian 5, Master Data rework) -- entered from the
-    submission detail page, applied to residents/family_cards on approval.
-
-    jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin (2026-08-02 fix):
-    the shared identity snapshot every PDF reads via _applicant_data_from_
-    resident -- captured here because there's no Resident row to edit via
-    the separate "Data Identitas Warga" panel until issuance materializes
-    one from these same fields (SubmissionService._materialize_pending_
-    applicant).
-    """
-
-    no_kk: str | None = Field(default=None, min_length=16, max_length=16, pattern=r"^\d{16}$")
-    rt_id: UUID | None = None
-    alamat: str | None = None
-    jk: str | None = None
-    tempat_lahir: str | None = None
-    tanggal_lahir: date | None = None
-    pekerjaan: str | None = None
-    status_kawin: str | None = None
-
-    @field_validator("tanggal_lahir")
-    @classmethod
-    def _tanggal_lahir_not_today_or_future(cls, value: date | None) -> date | None:
-        if value is not None and value >= date.today():
-            raise ValueError("Tanggal lahir tidak boleh hari ini atau di masa depan")
-        return value
-
-
 class SubmissionAttachmentRead(_Read):
     submission_id: UUID
     document_label: str
@@ -110,6 +84,10 @@ class SubmissionAttachmentRead(_Read):
 class SubmissionRead(_Read):
     template_id: UUID
     submitted_by_user_id: UUID | None = None
+    # 2026-08-06: real columns now (no more Resident lookup) -- who this
+    # letter is for, fixed at creation time.
+    applicant_nik: str
+    applicant_nama: str
     answers: dict
     physical_documents_promised: bool
     status: SubmissionStatus
@@ -124,35 +102,13 @@ class SubmissionRead(_Read):
     # staff detail page so a reviewer can reach the applicant directly.
     guest_contact_email: str | None = None
     guest_contact_whatsapp: str | None = None
-    # Set by staff from the detail page (see complete_applicant_data) for a
-    # guest submission whose NIK wasn't already in master data -- used to
-    # actually create the Resident/FamilyCard rows once this submission is
-    # approved (see SubmissionService._issue).
-    pending_applicant_no_kk: str | None = None
-    pending_applicant_rt_id: UUID | None = None
-    pending_applicant_jk: str | None = None
-    pending_applicant_tempat_lahir: str | None = None
-    pending_applicant_tanggal_lahir: date | None = None
-    pending_applicant_pekerjaan: str | None = None
-    pending_applicant_status_kawin: str | None = None
-    # Populated by the router (not the ORM object) from resolve_applicant_data
-    # -- staff/admin reviewing a submission need to see who it's for and
-    # verify their identity (nik/alamat) before approving.
-    applicant_nama: str | None = None
-    applicant_nik: str | None = None
+    # Populated by the router (not the ORM object) from
+    # SubmissionService.build_applicant_snapshot -- the shared identity
+    # block staff fills in via PUT .../master-data (SubmissionMasterDataUpdateRequest),
+    # read back out here flat (not nested) for the detail page's "Isi Data
+    # Master" panel and for crosscheck before approving.
     applicant_alamat: str | None = None
     applicant_no_kk: str | None = None
-    # Populated by the router: whether this submission's applicant is
-    # already linked to a Resident row (master data). False means the
-    # applicant-data/KK completion step is still pending for this NIK.
-    applicant_in_master_data: bool = False
-    # Populated by the router: the linked Resident's id (None if not yet in
-    # master data) plus the shared identity snapshot fields every letter
-    # type's PDF reads (jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin,
-    # see _applicant_data_from_resident) -- lets the detail page offer a
-    # "Lengkapi Data Identitas Warga" panel (PUT /residents/{id}) instead of
-    # citizens seeing a blank PDF field with no way for staff to fix it.
-    applicant_resident_id: UUID | None = None
     applicant_jk: str | None = None
     applicant_tempat_lahir: str | None = None
     applicant_tanggal_lahir: str | None = None
@@ -160,9 +116,11 @@ class SubmissionRead(_Read):
     applicant_status_kawin: str | None = None
     applicant_rt_id: UUID | None = None
     # Populated by the router: labels of is_staff_only TemplateFields still
-    # blank in `answers` -- approve() hard-blocks on this list server-side
-    # (SubmissionService._check_staff_only_fields_filled); surfaced here too
-    # so the detail page can warn and disable Approve before the click.
+    # blank in `answers`, plus any still-missing REQUIRED_STAFF_FIELDS_BY_JENIS
+    # master-data key for this letter type -- approve() hard-blocks on this
+    # list server-side (SubmissionService._check_staff_only_fields_filled);
+    # surfaced here too so the detail page can warn and disable Approve
+    # before the click.
     missing_staff_fields: list[str] = []
     # Populated by the router from SubmissionAttachment rows.
     attachments: list[SubmissionAttachmentRead] = []
@@ -177,14 +135,6 @@ class SubmissionStatusHistoryRead(_Read):
     actor_username: str | None = None
     note: str | None = None
     created_at: datetime
-
-
-class ApplicantLookupRead(BaseModel):
-    """Public NIK autofill result for the guest submission form."""
-
-    nama: str
-    alamat: str
-    no_kk: str
 
 
 class GuestTrackRead(BaseModel):

@@ -42,7 +42,6 @@ def _user_read(user: User) -> dict:
         role_name=user.role.name, position_id=user.position_id,
         position_name=user.position.display_name if user.position else None,
         position_level=user.position.level if user.position else None,
-        resident_id=user.resident_id, rt_id=user.rt_id, rw_id=user.rw_id,
         created_at=user.created_at,
     ).model_dump(mode="json")
 

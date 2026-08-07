@@ -2,12 +2,12 @@
 import uuid
 from typing import Any, ClassVar
 
-from sqlalchemy import Column, select
+from sqlalchemy import Column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
-from app.models.master import RT, RW, FamilyCard, Resident, VillageProfile
+from app.models.master import RT, RW, VillageProfile
 from app.repositories.base import BaseRepository
 
 logger = get_logger("master")
@@ -72,31 +72,20 @@ class _CrudService:
 
 
 class VillageProfileService:
-    """Singleton accessor for the village's descriptive profile.
+    """Accessor for the village's fixed identity data.
 
-    Exactly one VillageProfile row is expected to exist (seeded). No
-    create/delete/list by design -- see the rework spec.
+    ``VillageProfile`` is hardcoded (single-desa, no DB table -- see its
+    docstring); this keeps the same session-taking async shape as the old
+    DB-backed version so callers across letter issuance / dashboard /
+    attendance-report PDF generation don't need to change.
     """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self.repo = BaseRepository(session, VillageProfile)
 
     async def get(self) -> VillageProfile:
-        """Return the singleton profile row."""
-        stmt = select(VillageProfile).limit(1)
-        obj = await self.session.scalar(stmt)
-        if obj is None:
-            raise NotFoundError("Profil desa belum tersedia")
-        return obj
-
-    async def update(self, data: dict[str, Any]) -> VillageProfile:
-        """Update the singleton profile row."""
-        obj = await self.get()
-        obj = await self.repo.update(obj, **data)
-        await self.session.commit()
-        logger.info("VillageProfile updated id=%s", obj.id)
-        return obj
+        """Return the village's fixed identity data."""
+        return VillageProfile()
 
 
 class RWService(_CrudService):
@@ -111,21 +100,3 @@ class RTService(_CrudService):
 
     model = RT
     name = "RT"
-
-
-class FamilyCardService(_CrudService):
-    """CRUD service for FamilyCard."""
-
-    model = FamilyCard
-    name = "Kartu Keluarga"
-
-
-class ResidentService(_CrudService):
-    """CRUD service for Resident, with search over NIK and full name."""
-
-    model = Resident
-    name = "Penduduk"
-
-    @property
-    def search_columns(self) -> list[Column]:
-        return [Resident.nik, Resident.full_name]

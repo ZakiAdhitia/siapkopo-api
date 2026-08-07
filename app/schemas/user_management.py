@@ -18,9 +18,6 @@ class UserCreate(BaseModel):
     phone: str = Field(min_length=8, max_length=20)
     position_id: UUID
     nik: str | None = Field(default=None, min_length=8, max_length=20)
-    rt_id: UUID | None = None
-    rw_id: UUID | None = None
-    resident_id: UUID | None = None
 
     @field_validator("email")
     @classmethod
@@ -34,8 +31,6 @@ class UserUpdate(BaseModel):
     phone: str | None = None
     password: str | None = Field(default=None, min_length=6)
     position_id: UUID | None = None
-    rt_id: UUID | None = None
-    rw_id: UUID | None = None
     is_active: bool | None = None
 
     @field_validator("email")
@@ -71,7 +66,4 @@ class UserRead(BaseModel):
     position_id: UUID | None = None
     position_name: str | None = None
     position_level: int | None = None
-    resident_id: UUID | None = None
-    rt_id: UUID | None = None
-    rw_id: UUID | None = None
     created_at: datetime

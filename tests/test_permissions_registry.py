@@ -5,7 +5,7 @@ from app.permissions.registry import (
 
 
 def test_registry_shapes():
-    assert "resident:create" in PERMISSIONS
+    assert "master_data:read" in PERMISSIONS
     assert set(ROLE_PERMISSIONS) == {"warga", "staff", "admin", "administrator-it"}
     assert ROLE_PERMISSIONS["administrator-it"] == ["*"]
     assert {r[0] for r in ROLE_DEFS} == set(ROLE_PERMISSIONS)
@@ -39,7 +39,6 @@ def test_submission_permissions_registered():
     for code in (
         "submission:create", "submission:read", "submission:read_all",
         "submission:approve", "submission:reject", "submission:download",
-        "approval_config:manage",
     ):
         assert code in PERMISSIONS
     for code in ("auth:me", "submission:create", "submission:read", "submission:download"):

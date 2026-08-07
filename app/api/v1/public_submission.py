@@ -14,13 +14,15 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.submission import _history_read, _submission_read
-from app.core.exceptions import NotFoundError, ValidationAppError
+from app.core.exceptions import ValidationAppError
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.rate_limit import rate_limit
 from app.schemas.letter_template import LetterTemplateRead, TemplateFieldRead
-from app.schemas.submission import ApplicantLookupRead, GuestTrackRead
+from app.schemas.master import RTRead, RWRead
+from app.schemas.submission import GuestTrackRead
 from app.services.letter_template import LetterTemplateService
+from app.services.master import RTService, RWService
 from app.services.submission import SubmissionService
 
 _EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
@@ -44,10 +46,11 @@ async def list_public_template_fields(
 ) -> dict:
     """Dynamic form fields for one letter type, for the guest submission form.
 
-    Staff-only fields (e.g. SKTM's DTKS check, MASTER_COLUMN_LETTERS.md item
-    11) are filled in later by staff via the submission detail page, not
-    asked of the citizen here -- excluded entirely, not just hidden client-
-    side, so a guest can't see or submit an answer for one either.
+    2026-08-05 TAMBAHAN item 6: every field is now warga-input at
+    submission time -- the `is_staff_only` filter is kept as a defensive
+    no-op (no seeded field sets it anymore) rather than removed outright,
+    in case a future letter type genuinely needs a staff-verified-only
+    field again.
     """
     fields = await LetterTemplateService(session).list_fields(template_id)
     return success_response(
@@ -58,6 +61,23 @@ async def list_public_template_fields(
     )
 
 
+@router.get("/public/rw", response_model=Envelope[list[RWRead]])
+async def list_public_rw(session: AsyncSession = Depends(get_db)) -> dict:
+    """RW catalog for the guest submission form's RT/RW dropdown (2026-08-05
+    TAMBAHAN item 5: RT/RW must be picked from real master data, never
+    free-typed) -- just {id, number}, safe to expose with no auth."""
+    items, _ = await RWService(session).list(page=1, size=500)
+    return success_response([RWRead.model_validate(i).model_dump(mode="json") for i in items])
+
+
+@router.get("/public/rt", response_model=Envelope[list[RTRead]])
+async def list_public_rt(session: AsyncSession = Depends(get_db)) -> dict:
+    """RT catalog (with parent rw_id) for the guest submission form's
+    cascading RW -> RT dropdown -- see list_public_rw."""
+    items, _ = await RTService(session).list(page=1, size=500)
+    return success_response([RTRead.model_validate(i).model_dump(mode="json") for i in items])
+
+
 @router.post(
     "/submissions/guest",
     response_model=Envelope[GuestTrackRead],
@@ -65,20 +85,22 @@ async def list_public_template_fields(
 )
 async def create_guest_submission(
     template_id: UUID = Form(...),
-    nik: str = Form(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
-    contact_email: str = Form(..., pattern=_EMAIL_PATTERN),
-    contact_whatsapp: str | None = Form(default=None, pattern=_WHATSAPP_PATTERN),
+    applicant_nik: str = Form(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
+    applicant_nama: str = Form(..., min_length=1),
+    contact_email: str | None = Form(default=None, pattern=_EMAIL_PATTERN),
+    contact_whatsapp: str = Form(..., pattern=_WHATSAPP_PATTERN),
     answers: str = Form(default="{}"),
-    applicant_nama: str | None = Form(default=None),
-    applicant_alamat: str | None = Form(default=None),
-    document_labels: list[str] = Form(...),
-    documents: list[UploadFile] = File(...),
+    document_labels: list[str] = Form(default=[]),
+    documents: list[UploadFile] = File(default=[]),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Submit a letter request with no account: NIK + contact + the
+    """Submit a letter request with no account: NIK+nama + contact + the
     template's required supporting documents (mandatory upload, checked for
     blur -- Bagian 6, STRATEGI doc rev. 2026-07-26 anti-fraud requirement;
-    no more "I'll bring it physically" opt-out for guests).
+    no more "I'll bring it physically" opt-out for guests). 2026-08-06: no
+    more identity autofill/lookup -- alamat/RT/jk/TTL/pekerjaan/status/no_kk
+    are staff-entered later from KTP/KK photos via PUT .../master-data, not
+    asked of the citizen here.
     """
     try:
         parsed_answers = json.loads(answers)
@@ -95,8 +117,8 @@ async def create_guest_submission(
         )
 
     obj = await SubmissionService(session).create_guest(
-        template_id, nik, parsed_answers, contact_email, attachments,
-        applicant_nama, applicant_alamat, contact_whatsapp,
+        template_id, applicant_nik, applicant_nama, parsed_answers, contact_whatsapp, attachments,
+        contact_email,
     )
     return success_response(await _guest_track_read(session, obj), "Pengajuan terkirim")
 
@@ -113,22 +135,6 @@ async def search_guest_submissions(
     """List every guest/Mode Loket submission matching the given NIK."""
     subs = await SubmissionService(session).search_guest_submissions(nik)
     return success_response([await _guest_track_read(session, s) for s in subs])
-
-
-@router.get(
-    "/public/submissions/applicant-lookup",
-    response_model=Envelope[ApplicantLookupRead],
-    dependencies=[Depends(rate_limit("nik_lookup", limit=20, window_seconds=300))],
-)
-async def lookup_applicant(
-    nik: str = Query(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    """Autofill lookup for the guest submission form: exact NIK match only."""
-    data = await SubmissionService(session).lookup_applicant_by_nik(nik)
-    if data is None:
-        raise NotFoundError("NIK belum terdaftar")
-    return success_response(data)
 
 
 async def _guest_track_read(session: AsyncSession, obj) -> dict:

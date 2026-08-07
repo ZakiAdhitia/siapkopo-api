@@ -2,12 +2,11 @@
 import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
@@ -15,10 +14,9 @@ from app.dependencies.pagination import PaginationParams, pagination_params
 from app.models.auth import User
 from app.schemas.common import Page
 from app.schemas.submission import (
-    ApplicantDataCompleteRequest, ApplicantDataRead, ApplicantLookupRead,
     SubmissionAnswersUpdateRequest, SubmissionApproveRequest, SubmissionAttachmentRead,
-    SubmissionCreate, SubmissionRead, SubmissionRejectRequest, SubmissionStatusHistoryRead,
-    SubmissionWalkinCreate,
+    SubmissionCreate, SubmissionMasterDataUpdateRequest, SubmissionRead,
+    SubmissionRejectRequest, SubmissionStatusHistoryRead, SubmissionWalkinCreate,
 )
 from app.services.submission import SubmissionService
 
@@ -33,23 +31,19 @@ async def _load_user(session: AsyncSession, current: CurrentUser) -> User:
 
 
 async def _submission_read(session: AsyncSession, obj) -> dict:
-    """Build a SubmissionRead dict enriched with the applicant's name and
-    supporting documents.
+    """Build a SubmissionRead dict enriched with the staff-entered master-
+    data block and supporting documents.
 
-    Staff/admin reviewing a submission need to know who it's for, whether it
-    came from a logged-in user or a guest -- resolve it the same way the
-    PDF-issuance path already does
-    (SubmissionService.resolve_applicant_data_for_submission).
+    applicant_nik/applicant_nama are now real columns on `obj`, picked up
+    automatically by `model_validate` -- only the staff-entered identity
+    block (alamat/RT/jk/TTL/pekerjaan/status/no_kk,
+    SubmissionService.build_applicant_snapshot) needs resolving here.
     """
     service = SubmissionService(session)
     data = SubmissionRead.model_validate(obj).model_dump(mode="json")
-    applicant = await service.resolve_applicant_data_for_submission(obj)
-    data["applicant_nama"] = applicant["nama"]
-    data["applicant_nik"] = applicant["nik"]
+    applicant = await service.build_applicant_snapshot(obj)
     data["applicant_alamat"] = applicant["alamat"]
     data["applicant_no_kk"] = applicant["no_kk"]
-    data["applicant_in_master_data"] = obj.applicant_resident_id is not None
-    data["applicant_resident_id"] = obj.applicant_resident_id
     data["applicant_jk"] = applicant.get("jk")
     data["applicant_tempat_lahir"] = applicant.get("tempat_lahir")
     data["applicant_tanggal_lahir"] = applicant.get("tanggal_lahir")
@@ -92,7 +86,8 @@ async def create_submission(
     """Create a new letter submission."""
     user = await _load_user(session, current)
     obj = await SubmissionService(session).create(
-        user, body.template_id, body.answers, body.physical_documents_promised
+        user, body.template_id, body.answers,
+        body.applicant_nik, body.applicant_nama, body.physical_documents_promised,
     )
     return success_response(await _submission_read(session, obj), "Tersimpan")
 
@@ -106,38 +101,10 @@ async def create_walkin_submission(
     """Mode Loket: staff submits and immediately issues on a walk-in citizen's behalf."""
     actor = await _load_user(session, current)
     obj = await SubmissionService(session).create_walkin(
-        actor, body.template_id, body.nik, body.answers,
-        body.applicant_nama, body.applicant_alamat,
+        actor, body.template_id, body.applicant_nik, body.applicant_nama, body.answers,
+        body.master_data.model_dump(mode="json") if body.master_data else None,
     )
     return success_response(await _submission_read(session, obj), "Surat terbit")
-
-
-@router.get("/submissions/walkin/applicant-lookup", response_model=Envelope[ApplicantLookupRead])
-async def lookup_walkin_applicant(
-    nik: str = Query(..., min_length=16, max_length=16, pattern=r"^\d{16}$"),
-    session: AsyncSession = Depends(get_db),
-    _current: CurrentUser = Depends(require_permission("submission:walkin")),
-) -> dict:
-    """Autofill lookup for the Mode Loket form: exact NIK match only."""
-    data = await SubmissionService(session).lookup_applicant_by_nik(nik)
-    if data is None:
-        raise NotFoundError("NIK belum terdaftar")
-    return success_response(data)
-
-
-@router.get("/submissions/me/applicant-data", response_model=Envelope[ApplicantDataRead])
-async def get_my_applicant_data(
-    session: AsyncSession = Depends(get_db),
-    current: CurrentUser = Depends(require_permission("submission:create")),
-) -> dict:
-    """Auto-fill data (nama/nik/alamat/no_kk) for the caller's own submission form.
-
-    Static route: must precede /submissions/{submission_id} so "me" is never
-    parsed as a submission id.
-    """
-    user = await _load_user(session, current)
-    data = await SubmissionService(session).resolve_applicant_data(user)
-    return success_response(data)
 
 
 @router.get("/submissions", response_model=Envelope[Page[SubmissionRead]])
@@ -250,25 +217,6 @@ async def get_submission_history(
     return success_response(await _history_read(session, history))
 
 
-@router.patch("/submissions/{submission_id}/applicant-data", response_model=Envelope[SubmissionRead])
-async def complete_applicant_data(
-    submission_id: UUID,
-    body: ApplicantDataCompleteRequest,
-    session: AsyncSession = Depends(get_db),
-    _current: CurrentUser = Depends(require_permission("submission:approve")),
-) -> dict:
-    """Staff fills in master-data fields (No. KK, RT, identity snapshot) for
-    a guest submission whose NIK wasn't already on file -- applied to
-    residents/family_cards once this submission is approved (Bagian 5,
-    Master Data rework)."""
-    obj = await SubmissionService(session).complete_applicant_data(
-        submission_id, body.no_kk, body.rt_id,
-        body.jk, body.tempat_lahir, body.tanggal_lahir, body.pekerjaan, body.status_kawin,
-        body.alamat,
-    )
-    return success_response(await _submission_read(session, obj), "Data pemohon diperbarui")
-
-
 @router.put("/submissions/{submission_id}/answers", response_model=Envelope[SubmissionRead])
 async def update_submission_answers(
     submission_id: UUID,
@@ -281,6 +229,23 @@ async def update_submission_answers(
     against the template's field rules exactly like a fresh submission."""
     obj = await SubmissionService(session).update_answers(submission_id, body.answers)
     return success_response(await _submission_read(session, obj), "Data formulir diperbarui")
+
+
+@router.put("/submissions/{submission_id}/master-data", response_model=Envelope[SubmissionRead])
+async def update_submission_master_data(
+    submission_id: UUID,
+    body: SubmissionMasterDataUpdateRequest,
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:edit_master_data")),
+) -> dict:
+    """Staff fills in the shared identity block (alamat/RT/jk/tempat_lahir/
+    tanggal_lahir/pekerjaan/status_kawin/no_kk) from the citizen's KTP/KK
+    photo attachments -- blocking for Approve on letter types that need it
+    (SubmissionService.get_missing_staff_fields)."""
+    obj = await SubmissionService(session).update_master_data(
+        submission_id, body.model_dump(mode="json")
+    )
+    return success_response(await _submission_read(session, obj), "Data master tersimpan")
 
 
 @router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")

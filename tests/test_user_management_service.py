@@ -4,8 +4,6 @@ House style mirrors tests/test_auth_service.py: fetch seeded demo users by
 username, build `actor_permissions` via AuthService(session).permissions_for,
 call the service directly (no HTTP layer -- that's Task 2's job).
 """
-import uuid
-
 import pytest
 from sqlalchemy import select
 
@@ -94,31 +92,18 @@ async def test_create_email_conflict(seeded_session):
 
 
 @pytest.mark.asyncio
-async def test_create_rt_position_missing_rt_id(seeded_session):
-    """4a. position_id = rt's position but no rt_id in data -> ValidationAppError."""
+async def test_create_rt_position_no_rt_link_required(seeded_session):
+    """4. position_id = rt's position needs no rt_id -- Position "rt" is not
+    linked to a specific RT master-data row (User has no rt_id/rw_id)."""
     actor, perms = await _actor(seeded_session, "kades")
     rt_position = await _position(seeded_session, "rt")
     svc = UserManagementService(seeded_session)
-    with pytest.raises(ValidationAppError):
-        await svc.create(actor, perms, {
-            "full_name": "RT Baru", "username": "rtbaru",
-            "password": "password123", "email": "rtbaru@example.test",
-            "position_id": rt_position.id,
-        })
-
-
-@pytest.mark.asyncio
-async def test_create_rt_position_nonexistent_rt_id(seeded_session):
-    """4b. position_id = rt's position with a non-existent rt_id -> ValidationAppError."""
-    actor, perms = await _actor(seeded_session, "kades")
-    rt_position = await _position(seeded_session, "rt")
-    svc = UserManagementService(seeded_session)
-    with pytest.raises(ValidationAppError):
-        await svc.create(actor, perms, {
-            "full_name": "RT Baru", "username": "rtbaru2",
-            "password": "password123", "email": "rtbaru2@example.test",
-            "position_id": rt_position.id, "rt_id": uuid.uuid4(),
-        })
+    user = await svc.create(actor, perms, {
+        "full_name": "RT Baru", "username": "rtbaru",
+        "password": "password123", "email": "rtbaru@example.test",
+        "position_id": rt_position.id,
+    })
+    assert user.position.slug == "rt"
 
 
 @pytest.mark.asyncio

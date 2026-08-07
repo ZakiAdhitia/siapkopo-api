@@ -1,23 +1,19 @@
 """Idempotent database seeding."""
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.security import hash_password
-from app.models.auth import Permission, Position, Role, User
+from app.models.auth import Position, Role, User
 from app.models.letter_template import (
     FieldType,
     LetterOutputCategory,
     LetterTemplate,
     TemplateField,
 )
-from app.models.master import RT, RW, Resident, VillageProfile
-from app.models.submission import ApprovalStepConfig
-from app.permissions.registry import (
-    DEMO_ACCOUNTS, PERMISSIONS, POSITION_DEFS, POSITION_PERMISSIONS,
-    ROLE_DEFS, ROLE_PERMISSIONS,
-)
-from app.seed.data import RESIDENTS, VILLAGE
+from app.models.master import RT, RW
+from app.permissions.registry import DEMO_ACCOUNTS, POSITION_DEFS, ROLE_DEFS
+from app.seed.data import RW_RT_PAIRS
 from app.seed.letter_template_data import SURAT_TEMPLATES
 
 logger = get_logger("seed")
@@ -26,20 +22,10 @@ logger = get_logger("seed")
 async def seed_positions(session: AsyncSession) -> None:
     """Seed the fixed Position catalog (jabatan + hierarchy level).
 
-    Idempotent: looks up existing positions by slug before inserting, same
-    pattern as seed_rbac's role/permission handling.
+    Idempotent: looks up existing positions by slug before inserting.
+    Permissions are resolved purely from ``app.permissions.registry`` at
+    read time (``AuthService.permissions_for``), not stored here.
     """
-    all_codes = set(PERMISSIONS) | {
-        code for codes in POSITION_PERMISSIONS.values() for code in codes
-    }
-    existing_perms = {p.code: p for p in (await session.scalars(select(Permission))).all()}
-    for code in all_codes:
-        if code not in existing_perms:
-            p = Permission(code=code)
-            session.add(p)
-            existing_perms[code] = p
-    await session.flush()
-
     existing_positions = {p.slug: p for p in (await session.scalars(select(Position))).all()}
     for slug, display_name, level in POSITION_DEFS:
         position = existing_positions.get(slug)
@@ -50,29 +36,14 @@ async def seed_positions(session: AsyncSession) -> None:
         else:
             position.display_name = display_name
             position.level = level
-        position.permissions = [existing_perms[c] for c in POSITION_PERMISSIONS[slug]]
     await session.commit()
     logger.info("seed_positions complete: %d positions", len(existing_positions))
 
 
 async def seed_rbac(session: AsyncSession) -> None:
-    """Seed permissions, roles, role-permission mappings, and demo users."""
-    # Permissions: union of the concrete PERMISSIONS list and every code
-    # referenced by any role (including the "*" wildcard sentinel), so the
-    # wildcard is a real DB row and permission resolution stays purely
-    # data-driven (no static-registry short-circuit at read time).
-    all_codes = set(PERMISSIONS) | {
-        code for codes in ROLE_PERMISSIONS.values() for code in codes
-    }
-    existing_perms = {p.code: p for p in (await session.scalars(select(Permission))).all()}
-    for code in all_codes:
-        if code not in existing_perms:
-            p = Permission(code=code)
-            session.add(p)
-            existing_perms[code] = p
-    await session.flush()
-
-    # Roles + mappings
+    """Seed roles and demo users. Permissions are resolved purely from
+    ``app.permissions.registry`` at read time (``AuthService.permissions_for``),
+    not stored in the database."""
     existing_roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
     for name, display in ROLE_DEFS:
         role = existing_roles.get(name)
@@ -80,7 +51,6 @@ async def seed_rbac(session: AsyncSession) -> None:
             role = Role(name=name, display_name=display)
             session.add(role)
             existing_roles[name] = role
-        role.permissions = [existing_perms[c] for c in ROLE_PERMISSIONS[name]]
     await session.flush()
 
     # Demo users: create or update with latest role/position/email from DEMO_ACCOUNTS
@@ -122,57 +92,35 @@ async def seed_rbac(session: AsyncSession) -> None:
             user.position_id = position_id
             user.email = acc["email"]
     await session.commit()
-    logger.info("seed_rbac complete: %d permissions, %d roles, %d demo users",
-                len(existing_perms), len(existing_roles), len(DEMO_ACCOUNTS))
-
-
-async def seed_village_profile(session: AsyncSession) -> None:
-    """Seed the VillageProfile singleton from VILLAGE, if it doesn't exist yet.
-
-    Idempotent: no-op if a profile row already exists (e.g. created by the
-    village_profile-table migration's data copy, or a prior seed run).
-    """
-    existing = await session.scalar(select(VillageProfile))
-    if existing is not None:
-        return
-    session.add(VillageProfile(**VILLAGE))
-    await session.commit()
-    logger.info("seed_village_profile: created singleton profile")
+    logger.info("seed_rbac complete: %d roles, %d demo users",
+                len(existing_roles), len(DEMO_ACCOUNTS))
 
 
 async def seed_master(session: AsyncSession) -> None:
-    """Seed the RW/RT hierarchy and residents from mockData.
+    """Seed the RW/RT hierarchy from RW_RT_PAIRS.
 
-    Idempotent: re-running keeps the RW/RT singletons and skips any
-    resident whose synthetic NIK already exists.
+    2026-08-06: no more Resident population registry (couldn't be kept up
+    to date, see SISTEM_PENGOLAHAN_DATA_WARGA.md) -- this now seeds RW/RT
+    directly instead of as a side effect of iterating resident rows.
+    Idempotent: re-running skips any RW/RT that already exists.
     """
-    # Build RW/RT lazily keyed by rw number and (rw_obj.id, rt number).
     rw_map = {rw.number: rw for rw in (await session.scalars(select(RW))).all()}
-    rt_cache: dict[tuple, RT] = {}
-    existing_niks = {r.nik for r in (await session.scalars(select(Resident))).all()}
+    existing_rt = {(rt.rw_id, rt.number) for rt in (await session.scalars(select(RT))).all()}
     created = 0
-    for nik_suffix, name, _kk, rt_no, rw_no in RESIDENTS:
-        # Synthetic resident NIK, intentionally distinct from demo-user NIKs.
-        nik = f"3516{nik_suffix.zfill(12)[:12]}"
-        if nik in existing_niks:
-            continue
+    for rw_no, rt_no in RW_RT_PAIRS:
         rw = rw_map.get(rw_no)
         if rw is None:
             rw = RW(number=rw_no)
             session.add(rw)
             await session.flush()
             rw_map[rw_no] = rw
-        rt = rt_cache.get((rw.id, rt_no))
-        if rt is None:
-            rt = RT(rw_id=rw.id, number=rt_no)
-            session.add(rt)
-            await session.flush()
-            rt_cache[(rw.id, rt_no)] = rt
-        session.add(Resident(nik=nik, full_name=name, rt_id=rt.id))
+        if (rw.id, rt_no) in existing_rt:
+            continue
+        session.add(RT(rw_id=rw.id, number=rt_no))
+        existing_rt.add((rw.id, rt_no))
         created += 1
     await session.commit()
-    logger.info("seed_master complete: %d residents created (%d already present)",
-                created, len(existing_niks))
+    logger.info("seed_master complete: %d RT created (%d RW total)", created, len(rw_map))
 
 
 async def seed_letter_templates(session: AsyncSession) -> None:
@@ -267,12 +215,14 @@ async def sync_letter_template_fields(session: AsyncSession) -> None:
                 added_fields += 1
                 continue
             if (existing.label, existing.is_required, existing.validation_rules,
-                    existing.options, existing.placeholder) != (label, required, rules, options, placeholder):
+                    existing.options, existing.placeholder, existing.is_staff_only) \
+                    != (label, required, rules, options, placeholder, is_staff_only):
                 existing.label = label
                 existing.is_required = required
                 existing.validation_rules = rules
                 existing.options = options
                 existing.placeholder = placeholder
+                existing.is_staff_only = is_staff_only
                 updated_fields += 1
     await session.commit()
     logger.info(
@@ -281,103 +231,12 @@ async def sync_letter_template_fields(session: AsyncSession) -> None:
     )
 
 
-async def seed_link_demo_resident(session: AsyncSession) -> None:
-    """Link the demo 'warga' user to its matching Resident row.
-
-    Both represent Siti Rohmah but currently exist as unlinked rows (see
-    the plan's Task 15 rationale). Idempotent: no-op if already linked or
-    if either side is missing.
-
-    Matches by full_name, not NIK/ID — fine for this MVP seed dataset,
-    which has exactly one "Siti Rohmah". If the dataset ever grows to
-    include a second resident with the same name, this would silently
-    link to whichever one the DB happens to return first (session.scalar
-    does not raise on multiple matches). Not a concern for seed data, but
-    do not reuse this name-matching pattern for non-seed application code.
-    """
-    user = await session.scalar(select(User).where(User.username == "warga"))
-    if user is None or user.resident_id is not None:
-        return
-    resident = await session.scalar(select(Resident).where(Resident.full_name == "Siti Rohmah"))
-    if resident is None:
-        return
-    user.resident_id = resident.id
-    await session.commit()
-    logger.info("seed_link_demo_resident: linked warga user to resident id=%s", resident.id)
-
-
-async def seed_link_demo_rt_rw(session: AsyncSession) -> None:
-    """Link the demo 'rt001'/'rw001' users to their matching RT/RW rows.
-
-    Both demo accounts are seeded (in seed_rbac) before RT/RW master data
-    exists (in seed_master), so their rt_id/rw_id start out null and get
-    patched here, same two-pass pattern as seed_link_demo_resident.
-
-    Matches by resident full_name -> that resident's own RT/RW, same
-    fragility caveat as seed_link_demo_resident: fine for this single-match
-    seed dataset, not a pattern to reuse for non-seed application code.
-    """
-    for acc in DEMO_ACCOUNTS:
-        resident_name = acc.get("link_resident_name")
-        if resident_name is None:
-            continue
-        user = await session.scalar(select(User).where(User.username == acc["username"]))
-        if user is None or (user.rt_id is not None or user.rw_id is not None):
-            continue
-        resident = await session.scalar(
-            select(Resident).where(Resident.full_name == resident_name)
-        )
-        if resident is None or resident.rt_id is None:
-            continue
-        rt = await session.get(RT, resident.rt_id)
-        if rt is None:
-            continue
-        if acc["position"] == "rt":
-            user.rt_id = rt.id
-        elif acc["position"] == "rw":
-            user.rw_id = rt.rw_id
-    await session.commit()
-    logger.info("seed_link_demo_rt_rw complete")
-
-
-async def seed_approval_steps(session: AsyncSession) -> None:
-    """Seed the default 2-step approval chain (staff, admin).
-
-    Note: mockData's SETTINGS.approvalMode='3' (a 3-step staf/sekretaris/
-    kades chain) no longer maps 1:1 onto the 4-role catalog -- sekretaris_
-    desa and kepala_desa now share the "admin" Role (see Position), so a
-    literal 3-distinct-role chain isn't expressible anymore. This seeds the
-    2-step chain the new catalog supports (staff, then admin); redesigning
-    the approval-chain shape itself belongs to the later Submission/
-    Approval/PDF rework part, not this RBAC/Position part.
-
-    Idempotent: skips if any steps are already configured.
-    """
-    existing_count = await session.scalar(
-        select(func.count()).select_from(ApprovalStepConfig)
-    )
-    if existing_count:
-        logger.info("seed_approval_steps: already configured, skipping")
-        return
-
-    roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
-    for index, role_name in enumerate(("staff", "admin")):
-        session.add(ApprovalStepConfig(
-            order_index=index, role_id=roles[role_name].id
-        ))
-    await session.commit()
-    logger.info("seed_approval_steps: seeded 2-step chain")
-
-
 async def seed_all(session: AsyncSession) -> None:
-    """Run all seeders: positions, RBAC/demo-users, village profile,
-    master data, letter templates, demo links, default approval steps."""
+    """Run all seeders: positions, RBAC/demo-users, master data, letter
+    templates. (Village identity is hardcoded, not seeded -- see
+    app.models.master.VillageProfile.)"""
     await seed_positions(session)
     await seed_rbac(session)
-    await seed_village_profile(session)
     await seed_master(session)
     await seed_letter_templates(session)
     await sync_letter_template_fields(session)
-    await seed_link_demo_resident(session)
-    await seed_link_demo_rt_rw(session)
-    await seed_approval_steps(session)

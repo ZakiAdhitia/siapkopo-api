@@ -1,7 +1,5 @@
 import pytest
 
-from app.models.master import VillageProfile
-
 
 async def _token(client, identifier="operator", password="operator123"):
     r = await client.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
@@ -65,13 +63,7 @@ async def test_template_manage_requires_permission(client):
 
 
 @pytest.mark.asyncio
-async def test_template_preview_returns_pdf(client, db_session):
-    # No create/delete endpoint for the village profile singleton (see
-    # VillageProfileService); seeded directly since the preview endpoint
-    # reads it via VillageProfileService.get().
-    db_session.add(VillageProfile(name="Desa Kopo"))
-    await db_session.commit()
-
+async def test_template_preview_returns_pdf(client):
     tok = await _token(client)
     h = {"Authorization": f"Bearer {tok}"}
     created = await client.post("/api/v1/templates", json={

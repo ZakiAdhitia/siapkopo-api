@@ -6,9 +6,8 @@ This is the "really use the file directly" rendering path (per the
 2026-08-01 instruction), as opposed to the hand-authored HTML/Jinja
 renderers in `_domisili.py`/`_sku.py`/etc., which only *visually mirror*
 the real documents. Only letter types with a prepared `*_TEMPLATE.docx`
-are covered here (`_TEMPLATES`/`_SUB_TEMPLATES` below) -- `pindah`/`kk`
-still use the HTML pipeline, and `TemplateRenderService` falls back to it
-for any code not listed here.
+are covered here (`_TEMPLATES`/`_SUB_TEMPLATES` below); `TemplateRenderService`
+falls back to the HTML pipeline for any code not listed here.
 """
 from __future__ import annotations
 
@@ -47,6 +46,17 @@ _TEMPLATES: dict[str, str] = {
     "usaha": "SKU-Pengajuan/SKU_TEMPLATE.docx",
     "na": "NA-Pengajuan/NA_TEMPLATE.docx",
     "uhc": "UHC-Pengajuan/SKTM_TEMPLATE.docx",
+    # 06/08/2026, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md item 5: real F-1.03
+    # specimen (built from template_file/Pindah-Pengajuan/F-1.03.docx) --
+    # PindahRenderer/_pindah.py's HTML fallback is now dead code for this
+    # type, same as every other docx-backed letter (kept in place, not
+    # deleted, matching the existing precedent for domisili/lahir/etc).
+    "pindah": "Pindah-Pengajuan/PINDAH_TEMPLATE.docx",
+    # 06/08/2026 (Tambahan): real F-1.02 specimen (built from
+    # template_file/KK-Pengajuan/F-1.02.docx) -- KKRenderer/_kk.py's
+    # pdf_body_template-driven HTML fallback is now dead code, same
+    # precedent as every other docx-backed letter.
+    "kk": "KK-Pengajuan/KK_TEMPLATE.docx",
 }
 
 # Multi-document letter types: the source .doc has every sub-document as

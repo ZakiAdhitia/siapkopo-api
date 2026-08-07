@@ -1,6 +1,7 @@
 """Attendance Excel import -- digitizes a paper "Daftar Hadir" roster
 (NO | NAMA | 1 | 2 | ... | <days of month> | Ket) into `Attendance` rows.
-Mirrors `ResidentExcelService`'s per-row-savepoint import pattern.
+Uses a per-row-savepoint import pattern so one bad row doesn't abort the
+whole file.
 """
 import io
 from datetime import date

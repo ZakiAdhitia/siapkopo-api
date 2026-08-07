@@ -10,26 +10,18 @@ from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
 from app.schemas.auth import (
     ChangePasswordRequest, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest,
-    LogoutRequest, MeData, RefreshRequest, RegisterRequest, RegisterResponse,
-    ResetPasswordRequest, TokenData,
+    LogoutRequest, MeData, RefreshRequest, ResetPasswordRequest, TokenData,
 )
 from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
-@router.post("/register", response_model=Envelope[RegisterResponse])
-async def register(body: RegisterRequest, session: AsyncSession = Depends(get_db)) -> dict:
-    """Self-register a new account."""
-    _user, is_active = await AuthService(session).register(body.model_dump())
-    if is_active:
-        data = RegisterResponse(status="active", message="Registrasi berhasil, silakan masuk")
-    else:
-        data = RegisterResponse(
-            status="pending_approval",
-            message="Registrasi berhasil, menunggu persetujuan admin sebelum dapat masuk",
-        )
-    return success_response(data.model_dump(), data.message)
+# 2026-08-05 TAMBAHAN item 8: self-registration ("Daftar") is removed --
+# accounts are now created exclusively by internal staff via POST /users
+# (user:manage), never by the public. The old pending_approval
+# approve/reject flow on POST /users/{id}/approve|reject is left in place
+# so any rows created before this change (if the dev DB has them) can still
+# be resolved by an admin; no new pending_approval rows can be created now.
 
 
 @router.post("/login", response_model=Envelope[TokenData])
@@ -104,5 +96,4 @@ async def me(
         "username": record.username, "full_name": record.full_name, "email": record.email,
         "phone": record.phone,
         "position_name": record.position.display_name if record.position else None,
-        "rt_id": record.rt_id, "rw_id": record.rw_id,
     })

@@ -2,7 +2,8 @@
 import pytest
 from sqlalchemy import select
 
-from app.models.auth import Position, User
+from app.core.security import hash_password
+from app.models.auth import Position, Role, User
 
 
 async def _token(client, username, password):
@@ -139,19 +140,28 @@ async def test_delete_user_by_kades_on_bendahara(client, db_session):
     assert followup.status_code == 404
 
 
+async def _seed_pending_user(db_session, username: str, password: str) -> User:
+    """Insert a pending_approval=True row directly, standing in for what the
+    now-removed self-registration endpoint used to produce (2026-08-05
+    TAMBAHAN item 8: /auth/register is gone -- accounts are internal-only
+    now -- but POST /users/{id}/approve|reject must still work for any
+    pending row an admin needs to resolve)."""
+    role = (await db_session.scalars(select(Role).where(Role.name == "staff"))).first()
+    position = (await db_session.scalars(select(Position).where(Position.slug == "staff_desa"))).first()
+    user = User(
+        username=username, full_name="Calon Staff",
+        hashed_password=hash_password(password), role_id=role.id, position_id=position.id,
+        is_active=False, pending_approval=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
 @pytest.mark.asyncio
 async def test_approve_pending_registration(client, db_session):
-    reg = await client.post("/api/v1/auth/register", json={
-        "full_name": "Calon Staff Satu", "username": "calon_staff1",
-        "password": "rahasia123", "email": "calon.staff1@example.test",
-        "position_choice": "staff",
-    })
-    assert reg.status_code == 200
-    assert reg.json()["data"]["status"] == "pending_approval"
-
-    pending = await _user_by_username(db_session, "calon_staff1")
-    assert pending is not None
-    assert pending.pending_approval is True
+    pending = await _seed_pending_user(db_session, "calon_staff1", "rahasia123")
 
     h = await _headers(client, "kades", "kades123")
     resp = await client.post(f"/api/v1/users/{pending.id}/approve", headers=h)
@@ -167,15 +177,7 @@ async def test_approve_pending_registration(client, db_session):
 
 @pytest.mark.asyncio
 async def test_reject_pending_registration(client, db_session):
-    reg = await client.post("/api/v1/auth/register", json={
-        "full_name": "Calon Staff Dua", "username": "calon_staff2",
-        "password": "rahasia123", "email": "calon.staff2@example.test",
-        "position_choice": "staff",
-    })
-    assert reg.status_code == 200
-
-    pending = await _user_by_username(db_session, "calon_staff2")
-    assert pending is not None
+    pending = await _seed_pending_user(db_session, "calon_staff2", "rahasia123")
 
     h = await _headers(client, "kades", "kades123")
     resp = await client.post(f"/api/v1/users/{pending.id}/reject", headers=h)

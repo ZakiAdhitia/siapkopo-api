@@ -14,6 +14,15 @@ from app.repositories.base import BaseRepository
 
 logger = get_logger("letter_template")
 
+# 2026-08-05 TAMBAHAN item 4: "Perubahan Elemen Data Kependudukan" (ubah_data,
+# F-1.06) is fully hidden -- not deleted -- from the Template Surat page and
+# every submission picker, per explicit product decision. Restoring it later
+# is a one-line change here. Filtered in Python rather than in the SQL
+# WHERE clause since every caller (TemplateBuilder, Guest, Mode Loket)
+# always fetches the whole list in one page (size=50, ~10 templates total),
+# so the total-count adjustment below stays exact in practice.
+_HIDDEN_TEMPLATE_CODES = {"ubah_data"}
+
 
 class LetterTemplateService:
     """CRUD orchestration for LetterTemplate and its TemplateField rows."""
@@ -43,9 +52,12 @@ class LetterTemplateService:
     ) -> tuple[list[LetterTemplate], int]:
         """Return a page of templates, optionally filtered by active flag and name search."""
         search_tuple = ([LetterTemplate.name], search) if search else None
-        return await self.repo.list(
+        rows, total = await self.repo.list(
             page=page, size=size, filters={"is_active": is_active}, search=search_tuple
         )
+        hidden_in_page = sum(1 for r in rows if r.code in _HIDDEN_TEMPLATE_CODES)
+        rows = [r for r in rows if r.code not in _HIDDEN_TEMPLATE_CODES]
+        return rows, total - hidden_in_page
 
     async def update(self, id_: uuid.UUID, data: dict[str, Any]) -> LetterTemplate:
         """Update a template's metadata."""

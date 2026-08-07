@@ -3,7 +3,6 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.auth import Role, User
-from app.models.master import FamilyCard, Resident, VillageProfile
 
 
 async def _token(client, identifier, password):
@@ -12,16 +11,14 @@ async def _token(client, identifier, password):
 
 
 async def _setup_village_template_workflow(client, db_session):
-    """Seed the village profile singleton + a letter template + a 2-step workflow.
+    """Seed a letter template.
 
-    The village profile has no create/delete endpoint (singleton -- see
-    VillageProfileService), so it's seeded directly via the DB session
-    rather than through the API. It's still required here because the
-    final approval step's PDF issuance reads it via VillageProfileService.get().
+    The village identity used by the final approval step's PDF issuance
+    (VillageProfileService.get()) is hardcoded, not seeded (see
+    app.models.master.VillageProfile's docstring). The approval chain
+    itself is a fixed 2-step sequence (SubmissionService.APPROVAL_STEP_COUNT),
+    not configured per-test.
     """
-    db_session.add(VillageProfile(name="Desa Kopo"))
-    await db_session.commit()
-
     admin_tok = await _token(client, "operator", "operator123")
     h = {"Authorization": f"Bearer {admin_tok}"}
 
@@ -36,11 +33,6 @@ async def _setup_village_template_workflow(client, db_session):
     await client.post(f"/api/v1/templates/{template_id}/fields", json={
         "field_key": "alamat_tinggal_saat_ini", "label": "Alamat", "field_type": "text",
         "is_required": True,
-    }, headers=h)
-
-    roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
-    await client.put("/api/v1/approval-steps", json={
-        "steps": [{"role_id": roles["staff"]}, {"role_id": roles["admin"]}],
     }, headers=h)
     return template_id
 
@@ -59,6 +51,7 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     wh = {"Authorization": f"Bearer {warga_tok}"}
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji 99"},
+        "applicant_nik": "3516000000000101", "applicant_nama": "Warga Uji",
     }, headers=wh)
     assert created.status_code == 200
     submission_id = created.json()["data"]["id"]
@@ -68,6 +61,22 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
 
     staf_tok = await _token(client, "staf", "staf123")
     sh = {"Authorization": f"Bearer {staf_tok}"}
+
+    # 2026-08-06: staff fills the shared identity block (from KTP/KK photos)
+    # before its own approve() -- domisili's REQUIRED_STAFF_FIELDS_BY_JENIS is
+    # checked on every approve() call, not just the final one (blocking,
+    # SubmissionService.get_missing_staff_fields), and "staff" is the role
+    # that both holds submission:edit_master_data and owns the first step.
+    master_data = await client.put(
+        f"/api/v1/submissions/{submission_id}/master-data",
+        json={
+            "jk": "Perempuan", "tempat_lahir": "Bogor", "tanggal_lahir": "1990-01-01",
+            "pekerjaan": "Wiraswasta", "status_kawin": "Kawin",
+        },
+        headers=sh,
+    )
+    assert master_data.status_code == 200
+
     approve1 = await client.post(
         f"/api/v1/submissions/{submission_id}/approve", json={"note": "ok"}, headers=sh
     )
@@ -85,7 +94,9 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     assert approve2.status_code == 200
     body = approve2.json()["data"]
     assert body["status"] == "issued"
-    assert body["letter_number"]
+    # Left blank -- no automatic numbering, staff fill it in by hand at the
+    # desa office (see SubmissionService._issue's docstring).
+    assert body["letter_number"] is None
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=wh)
     assert pdf.status_code == 200
@@ -96,58 +107,12 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_get_my_applicant_data_falls_back_to_user_fields(client, db_session):
-    """The `client` fixture only seeds RBAC (no seed_master/link step), so the
-    demo 'warga' account has no linked Resident here -- exercises the
-    User-fallback branch of SubmissionService.resolve_applicant_data.
-    """
-    warga_tok = await _token(client, "warga", "warga123")
-    resp = await client.get(
-        "/api/v1/submissions/me/applicant-data",
-        headers={"Authorization": f"Bearer {warga_tok}"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert data == {"nama": "Siti Rohmah", "nik": "3516064588020003", "alamat": "-", "no_kk": "-"}
-
-
-@pytest.mark.asyncio
-async def test_get_my_applicant_data_returns_linked_resident(client, db_session):
-    """When the user IS linked to a Resident/FamilyCard, prefer that over the
-    User-row fallback (exercises the other branch of resolve_applicant_data).
-    """
-    fc = FamilyCard(kk_number="3516000000009999", address="Jl. Merdeka 1")
-    db_session.add(fc)
-    await db_session.flush()
-    resident = Resident(
-        nik="3516000000001234", full_name="Warga Uji", family_card_id=fc.id,
-        address="Jl. Merdeka 1 RT 01/RW 01",
-    )
-    db_session.add(resident)
-    await db_session.flush()
-
-    warga_user = await db_session.scalar(select(User).where(User.username == "warga"))
-    warga_user.resident_id = resident.id
-    await db_session.commit()
-
-    warga_tok = await _token(client, "warga", "warga123")
-    resp = await client.get(
-        "/api/v1/submissions/me/applicant-data",
-        headers={"Authorization": f"Bearer {warga_tok}"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["data"] == {
-        "nama": "Warga Uji", "nik": "3516000000001234",
-        "alamat": "Jl. Merdeka 1 RT 01/RW 01", "no_kk": "3516000000009999",
-    }
-
-
-@pytest.mark.asyncio
 async def test_approve_wrong_turn_returns_403(client, db_session):
     template_id = await _setup_village_template_workflow(client, db_session)
     warga_tok = await _token(client, "warga", "warga123")
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji"},
+        "applicant_nik": "3516000000000102", "applicant_nama": "Warga Uji",
     }, headers={"Authorization": f"Bearer {warga_tok}"})
     submission_id = created.json()["data"]["id"]
 
@@ -177,6 +142,7 @@ async def test_get_submission_rejects_non_owner(client, db_session):
     warga_tok = await _token(client, "warga", "warga123")
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji 1"},
+        "applicant_nik": "3516000000000103", "applicant_nama": "Warga Uji",
     }, headers={"Authorization": f"Bearer {warga_tok}"})
     submission_id = created.json()["data"]["id"]
 
@@ -209,6 +175,7 @@ async def test_get_submission_history_rejects_non_owner(client, db_session):
     warga_tok = await _token(client, "warga", "warga123")
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji 2"},
+        "applicant_nik": "3516000000000104", "applicant_nama": "Warga Uji",
     }, headers={"Authorization": f"Bearer {warga_tok}"})
     submission_id = created.json()["data"]["id"]
 
@@ -242,6 +209,7 @@ async def test_upload_attachment_rejects_non_owner(client, db_session, tmp_path,
     warga_tok = await _token(client, "warga", "warga123")
     created = await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji 3"},
+        "applicant_nik": "3516000000000105", "applicant_nama": "Warga Uji",
     }, headers={"Authorization": f"Bearer {warga_tok}"})
     submission_id = created.json()["data"]["id"]
 

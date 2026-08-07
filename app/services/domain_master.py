@@ -119,6 +119,41 @@ DOMAIN_MASTER_SERVICES: dict[str, type[_CrudService]] = {
     "ubah_data": MasterUbahDataService,
 }
 
+# LetterTemplate.code -> jenis (the DOMAIN_MASTER_SERVICES key), for the two
+# places that need to go from "which letter type is this submission" to
+# "which domain-master table does it feed" (SubmissionService._save_to_domain_master,
+# get_missing_staff_fields).
+TEMPLATE_CODE_TO_JENIS: dict[str, str] = {
+    "domisili": "domisili", "lahir": "kelahiran", "mati": "kematian",
+    "usaha": "sku", "na": "na", "uhc": "uhc", "pindah": "pindah",
+    "kk": "kk", "ubah_data": "ubah_data",
+}
+
+# 2026-08-06: which of SubmissionMasterDataUpdateRequest's generic fields
+# (alamat/rt_id/jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin/no_kk)
+# a given jenis's domain-master row actually needs from staff, beyond the
+# submission's own always-present applicant_nik/applicant_nama -- blocking
+# for Approve (SubmissionService.get_missing_staff_fields). Derived by
+# reading exactly which `applicant.get(...)` keys each
+# SubmissionService._build_domain_master_fields branch reads (as opposed to
+# `answers.get(...)`, which is the citizen's own already-required form
+# input and untouched by this table) -- a lookup dict, not an if/elif
+# per jenis, per CLAUDE.md's Dynamic Form/no-hardcode rule. Keep this in
+# sync by hand if either that function's branches change; a mismatch would
+# only under- or over-block Approve, never crash, but IS a maintenance trap
+# worth a comment.
+REQUIRED_STAFF_FIELDS_BY_JENIS: dict[str, list[str]] = {
+    "domisili": ["jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
+    "kelahiran": [],  # subject is the newborn, not the applicant -- 100% citizen answers
+    "kematian": [],  # subject is the deceased -- 100% citizen answers
+    "sku": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
+    "na": [],  # NA's own form already collects jk/ttl/etc. as direct required citizen answers
+    "uhc": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
+    "pindah": ["alamat", "no_kk"],
+    "kk": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "status_kawin"],  # not pekerjaan
+    "ubah_data": ["alamat", "no_kk"],
+}
+
 # Internal bookkeeping columns not useful in an exported spreadsheet.
 _EXPORT_SKIP_COLUMNS = {"id", "created_at", "updated_at", "deleted_at"}
 

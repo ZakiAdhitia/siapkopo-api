@@ -6,14 +6,14 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationAppError
 from app.core.logging import get_logger
 from app.models.auth import User
 from app.models.letter_template import FieldType, LetterTemplate, TemplateField
-from app.models.master import RT, RW, FamilyCard, Resident
+from app.models.master import RT, RW
 from app.models.submission import (
     HistoryAction,
     Submission,
@@ -22,22 +22,31 @@ from app.models.submission import (
     SubmissionStatusHistory,
 )
 from app.repositories.base import BaseRepository
-from app.services.approval_config import ApprovalStepConfigService
 from app.services.audit_log import AuditLogService
+from app.services.domain_master import (
+    DOMAIN_MASTER_SERVICES,
+    REQUIRED_STAFF_FIELDS_BY_JENIS,
+    TEMPLATE_CODE_TO_JENIS,
+)
 from app.services.file_storage import FileStorageService
-from app.services.letter_number import LetterNumberService
-from app.services.master import FamilyCardService, ResidentService, VillageProfileService
+from app.services.letter_template import _HIDDEN_TEMPLATE_CODES
+from app.services.master import VillageProfileService
 from app.services.notification import LoggingNotificationProvider
 from app.services.template_render import TemplateFileService, TemplateRenderService, format_tanggal_indonesia
 from app.services.template_render.service import _hari_indonesia
 
 logger = get_logger("submission")
 
+# Fixed number of approve() calls (by anyone holding submission:approve) a
+# submission needs before it's issued -- previously a DB-configured,
+# role-gated chain (`approval_step_configs`); simplified to a plain
+# constant, no more per-step role restriction.
+APPROVAL_STEP_COUNT = 2
+
 
 class SubmissionService:
     """Business logic for the submission lifecycle: creation, querying,
-    approval/reject with data-driven turn enforcement, and automatic PDF
-    issuance on the final approval step.
+    approval/reject, and automatic PDF issuance on the final approval step.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -143,120 +152,54 @@ class SubmissionService:
         if errors:
             raise ValidationAppError("; ".join(errors))
 
-    async def _applicant_data_from_resident(self, resident: Resident) -> dict:
-        """Build the shared applicant snapshot directly from a Resident row.
+    async def build_applicant_snapshot(self, submission: Submission) -> dict:
+        """Build the shared {nama, nik, alamat, no_kk, jk, tempat_lahir,
+        tanggal_lahir, pekerjaan, status_kawin, rt, rw, rt_id} block every
+        PDF template and domain-master row reads (SYARAT-PENGAJUAN-SURAT.md's
+        "Field yang identik di semua surat").
 
-        Beyond {nama, nik, alamat, no_kk} (used since before this rework),
-        also surfaces jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin/rt/rw
-        -- the same "Field yang identik di semua surat" block every domain
-        master table (SYARAT-PENGAJUAN-SURAT.md) repeats. Resident already
-        has all of these except marital_status; letting one place resolve
-        them means every _save_to_domain_master() mapping and pdf_body_template
-        gets them for free instead of re-deriving per letter type.
+        2026-08-06: nama/nik are fixed on the submission itself at creation
+        time; everything else comes from what staff entered via
+        PUT .../master-data (SubmissionMasterDataUpdateRequest) -- there is
+        no more persistent Resident row to read this from (see
+        SISTEM_PENGOLAHAN_DATA_WARGA.md; replaces the old
+        resolve_applicant_data_for_submission/_applicant_data_from_resident).
         """
-        kk_number = "-"
-        if resident.family_card_id is not None:
-            fc = await self.session.get(FamilyCard, resident.family_card_id)
-            if fc is not None:
-                kk_number = fc.kk_number
+        draft = submission.staff_master_data or {}
+        rt_id = draft.get("rt_id")
         rt_number, rw_number = None, None
-        if resident.rt_id is not None:
-            rt = await self.session.get(RT, resident.rt_id)
+        if rt_id:
+            rt = await self.session.get(RT, rt_id)
             if rt is not None:
                 rt_number = rt.number
                 rw = await self.session.get(RW, rt.rw_id)
                 if rw is not None:
                     rw_number = rw.number
         return {
-            "nama": resident.full_name, "nik": resident.nik,
-            "alamat": resident.address or "-", "no_kk": kk_number,
-            "jk": {"L": "Laki-laki", "P": "Perempuan"}.get(resident.gender or "", None),
-            "tempat_lahir": resident.birth_place,
-            "tanggal_lahir": resident.birth_date.isoformat() if resident.birth_date else None,
-            "pekerjaan": resident.occupation,
-            "status_kawin": resident.marital_status,
-            "rt": rt_number, "rw": rw_number, "rt_id": resident.rt_id,
+            "nama": submission.applicant_nama, "nik": submission.applicant_nik,
+            "alamat": draft.get("alamat") or "-", "no_kk": draft.get("no_kk") or "-",
+            "jk": draft.get("jk"), "tempat_lahir": draft.get("tempat_lahir"),
+            "tanggal_lahir": draft.get("tanggal_lahir"), "pekerjaan": draft.get("pekerjaan"),
+            "status_kawin": draft.get("status_kawin"), "rt": rt_number, "rw": rw_number,
+            "rt_id": rt_id,
         }
-
-    @staticmethod
-    def _fallback_applicant_snapshot(nama: str, nik: str, alamat: str, no_kk: str) -> dict:
-        """Minimal snapshot for applicants with no linked Resident row yet
-        (pending guest/walk-in NIK) -- same shape as
-        `_applicant_data_from_resident`, with the Resident-only fields null."""
-        return {
-            "nama": nama, "nik": nik, "alamat": alamat, "no_kk": no_kk,
-            "jk": None, "tempat_lahir": None, "tanggal_lahir": None,
-            "pekerjaan": None, "status_kawin": None, "rt": None, "rw": None, "rt_id": None,
-        }
-
-    async def resolve_applicant_data(self, user: User) -> dict:
-        """Build {nama, nik, alamat, no_kk} for auto-fill and PDF placeholders.
-
-        Falls back to User fields if the user has no linked Resident (should
-        not happen for the seeded demo warga account after Task 15's seed
-        link, but keeps this from hard-failing if it ever does).
-        """
-        fallback = self._fallback_applicant_snapshot(user.full_name, user.nik or "-", "-", "-")
-        if user.resident_id is None:
-            return fallback
-        resident = await self.session.get(Resident, user.resident_id)
-        if resident is None:
-            return fallback
-        return await self._applicant_data_from_resident(resident)
-
-    async def resolve_applicant_data_for_submission(self, submission: Submission) -> dict:
-        """Like resolve_applicant_data, but for a Submission of any origin:
-        a logged-in user's own submission, a guest submission, or a Mode
-        Loket walk-in (where submitted_by_user_id is the STAFF, not the
-        applicant). applicant_resident_id -- who the letter is actually
-        for -- always takes priority when set; a guest submission whose NIK
-        wasn't in master data yet falls back to its own pending_applicant_*
-        fields (Bagian 5, Master Data rework); only a normal logged-in
-        warga submission (neither of the above) falls back to resolving the
-        applicant from the submitting user.
-        """
-        if submission.applicant_resident_id is not None:
-            resident = await self.session.get(Resident, submission.applicant_resident_id)
-            if resident is None:
-                return self._fallback_applicant_snapshot("-", "-", "-", "-")
-            return await self._applicant_data_from_resident(resident)
-        if submission.pending_applicant_nik is not None:
-            return self._fallback_applicant_snapshot(
-                submission.pending_applicant_nama or "-",
-                submission.pending_applicant_nik,
-                submission.pending_applicant_alamat or "-",
-                submission.pending_applicant_no_kk or "-",
-            )
-        if submission.submitted_by_user_id is not None:
-            user = await self.session.get(User, submission.submitted_by_user_id)
-            return await self.resolve_applicant_data(user)
-        return self._fallback_applicant_snapshot("-", "-", "-", "-")
-
-    async def lookup_applicant_by_nik(self, nik: str) -> dict | None:
-        """Public autofill lookup for the guest submission form: exact NIK
-        match only, or None if no Resident has that NIK on file."""
-        resident = await self.session.scalar(
-            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
-        )
-        if resident is None:
-            return None
-        return await self._applicant_data_from_resident(resident)
 
     async def create(
         self, user: User, template_id: uuid.UUID, answers: dict[str, Any],
+        applicant_nik: str, applicant_nama: str,
         physical_documents_promised: bool = False,
     ) -> Submission:
         """Create a new submission after validating answers against the template."""
         template = await self.template_repo.get(template_id)
-        if template is None or not template.is_active:
+        if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        applicant = await self.resolve_applicant_data(user)
-        self._validate_answers(fields, answers, applicant)
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
 
         obj = Submission(
             template_id=template_id,
             submitted_by_user_id=user.id, answers=answers,
+            applicant_nik=applicant_nik, applicant_nama=applicant_nama,
             physical_documents_promised=physical_documents_promised,
             status=SubmissionStatus.PENDING, current_step_index=0,
         )
@@ -286,51 +229,23 @@ class SubmissionService:
                 return docs
         return template.required_documents
 
-    async def _resolve_or_create_resident(
-        self, nik: str, applicant_nama: str | None, applicant_alamat: str | None,
-    ) -> Resident:
-        """Look up a Resident by NIK, auto-creating a minimal row if none
-        exists yet -- the "every transaction enriches the population master
-        data" pattern Mode Loket uses (Bagian 3.1 STRATEGI doc). Staff has
-        already verified the physical KTP/KK in person for a walk-in, so an
-        immediate insert is safe -- unlike the guest flow (Bagian 5, Master
-        Data rework), which defers this to approval instead; see
-        `_lookup_resident_by_nik`.
-        """
-        resident = await self.session.scalar(
-            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
-        )
-        if resident is None:
-            if not applicant_nama:
-                raise ValidationAppError("NIK belum terdaftar, mohon isi nama lengkap pemohon")
-            resident = await ResidentService(self.session).create({
-                "nik": nik, "full_name": applicant_nama, "address": applicant_alamat,
-            })
-        return resident
-
-    async def _lookup_resident_by_nik(self, nik: str) -> Resident | None:
-        """Read-only NIK lookup -- never writes to master data."""
-        return await self.session.scalar(
-            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
-        )
 
     async def create_guest(
-        self, template_id: uuid.UUID, nik: str, answers: dict[str, Any], contact_email: str,
+        self, template_id: uuid.UUID, applicant_nik: str, applicant_nama: str,
+        answers: dict[str, Any], contact_whatsapp: str,
         attachments: list[tuple[str, str, bytes, str]],
-        applicant_nama: str | None = None, applicant_alamat: str | None = None,
-        contact_whatsapp: str | None = None,
+        contact_email: str | None = None,
     ) -> Submission:
         """Create a submission with no account (Bagian 3.2, STRATEGI doc).
 
-        Looks up the applicant by NIK, but -- unlike Mode Loket -- never
-        writes to master data at this point (Bagian 5, Master Data rework):
-        a NIK already on file is linked via applicant_resident_id, but an
-        unknown NIK is only stored as raw pending_applicant_* fields on the
-        submission itself. The actual Resident row (if needed) is only
-        created once staff has reviewed and approved the submission (see
-        `complete_applicant_data` and `_issue`), preventing unverified guest
-        input from polluting the population master data before anyone at
-        the village has checked it.
+        2026-08-06: the applicant is just nik+nama, stored directly on the
+        submission -- no Resident lookup/materialization of any kind
+        (SISTEM_PENGOLAHAN_DATA_WARGA.md: a persistent population registry
+        couldn't be kept up to date, so it's gone; no more NIK autofill
+        anywhere either). Everything else about "who this letter is for"
+        (alamat/RT/jk/TTL/pekerjaan/status/no_kk) is now staff-entered from
+        KTP/KK photo attachments via PUT .../master-data on the detail page,
+        not asked of the citizen at submission time.
 
         `attachments` is `[(document_label, filename, content, content_type), ...]`
         -- exactly one file per template.required_documents entry is
@@ -343,10 +258,10 @@ class SubmissionService:
         anything is written to the database.
         """
         template = await self.template_repo.get(template_id)
-        if template is None or not template.is_active:
+        if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers, {"nik": nik, "nama": applicant_nama})
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
 
         required_docs = set(self._resolve_required_documents(template, answers))
         optional_docs = set(template.optional_documents)
@@ -368,17 +283,10 @@ class SubmissionService:
             storage.validate_upload(content, content_type)
             storage.check_not_blurry(content, content_type, label)
 
-        resident = await self._lookup_resident_by_nik(nik)
-        if resident is None and not applicant_nama:
-            raise ValidationAppError("NIK belum terdaftar, mohon isi nama lengkap pemohon")
-
         obj = Submission(
             template_id=template_id,
             submitted_by_user_id=None,
-            applicant_resident_id=resident.id if resident else None,
-            pending_applicant_nik=None if resident else nik,
-            pending_applicant_nama=None if resident else applicant_nama,
-            pending_applicant_alamat=None if resident else applicant_alamat,
+            applicant_nik=applicant_nik, applicant_nama=applicant_nama,
             guest_contact_email=contact_email, guest_contact_whatsapp=contact_whatsapp,
             answers=answers,
             physical_documents_promised=False,
@@ -399,36 +307,42 @@ class SubmissionService:
         ))
         await self.session.commit()
         logger.info(
-            "Guest submission created id=%s template_id=%s resident_id=%s attachments=%d",
-            obj.id, template_id, resident.id if resident else None, len(attachments),
+            "Guest submission created id=%s template_id=%s attachments=%d",
+            obj.id, template_id, len(attachments),
         )
-        LoggingNotificationProvider().send_email(
-            contact_email, "Pengajuan Surat Diterima",
-            "Pengajuan Anda telah diterima dan sedang diproses. "
-            "Cek status kapan saja dengan NIK, No. WhatsApp, atau Email Anda di halaman Cek Status.",
-        )
+        if contact_email:
+            LoggingNotificationProvider().send_email(
+                contact_email, "Pengajuan Surat Diterima",
+                "Pengajuan Anda telah diterima dan sedang diproses. "
+                "Cek status kapan saja dengan NIK, No. WhatsApp, atau Email Anda di halaman Cek Status.",
+            )
         return obj
 
     async def create_walkin(
-        self, actor: User, template_id: uuid.UUID, nik: str, answers: dict[str, Any],
-        applicant_nama: str | None = None, applicant_alamat: str | None = None,
+        self, actor: User, template_id: uuid.UUID, applicant_nik: str, applicant_nama: str,
+        answers: dict[str, Any], master_data: dict[str, Any] | None = None,
     ) -> Submission:
         """Mode Loket (Bagian 3.1, STRATEGI doc): staff enters a walk-in
         citizen's request on their behalf and it is issued immediately --
         the citizen already brought physical KTP/KK for the staff to verify
         in person, so the normal approval chain is skipped entirely.
+
+        `master_data` is the same shape as `SubmissionMasterDataUpdateRequest`
+        -- filled in inline here (best-effort, not blocking) since a
+        walk-in letter issues immediately and has no later detail-page step
+        to fill it in at, unlike a normal submission's Approve gate.
         """
         template = await self.template_repo.get(template_id)
-        if template is None or not template.is_active:
+        if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers, {"nik": nik, "nama": applicant_nama})
-
-        resident = await self._resolve_or_create_resident(nik, applicant_nama, applicant_alamat)
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
 
         obj = Submission(
             template_id=template_id,
-            submitted_by_user_id=actor.id, applicant_resident_id=resident.id,
+            submitted_by_user_id=actor.id,
+            applicant_nik=applicant_nik, applicant_nama=applicant_nama,
+            staff_master_data=master_data,
             answers=answers, physical_documents_promised=True,
             status=SubmissionStatus.PENDING, current_step_index=0,
         )
@@ -441,46 +355,9 @@ class SubmissionService:
         await self._issue(obj, actor)
         await self.session.commit()
         logger.info(
-            "Walk-in submission created & issued id=%s template_id=%s by=%s resident_id=%s",
-            obj.id, template_id, actor.id, resident.id,
+            "Walk-in submission created & issued id=%s template_id=%s by=%s",
+            obj.id, template_id, actor.id,
         )
-        return obj
-
-    async def complete_applicant_data(
-        self, submission_id: uuid.UUID, no_kk: str | None, rt_id: uuid.UUID | None,
-        jk: str | None = None, tempat_lahir: str | None = None, tanggal_lahir: date | None = None,
-        pekerjaan: str | None = None, status_kawin: str | None = None, alamat: str | None = None,
-    ) -> Submission:
-        """Staff fills in the master-data fields (Bagian 5, Master Data
-        rework) a guest didn't provide -- No. KK, RT, and the shared identity
-        snapshot (jk/tempat_lahir/tanggal_lahir/pekerjaan/status_kawin) --
-        from the submission detail page. Only stored on the submission for
-        now; the actual Resident/FamilyCard rows are created at approval
-        (`_issue` -> `_materialize_pending_applicant`), not here.
-
-        The identity fields exist here (rather than only on the "Data
-        Identitas Warga" panel) because THAT panel needs an existing
-        Resident row to edit -- for a brand-new NIK there isn't one yet
-        until issuance, so without this, staff had no way to supply
-        jk/TTL/pekerjaan/status before approving and the newly-created
-        Resident (and every PDF reading it) stayed permanently blank.
-        """
-        obj = await self.get_or_404(submission_id)
-        if obj.applicant_resident_id is not None:
-            raise ValidationAppError("Pemohon pengajuan ini sudah tercatat di master data")
-        if obj.pending_applicant_nik is None:
-            raise ValidationAppError("Pengajuan ini tidak memerlukan pelengkapan data pemohon")
-        obj.pending_applicant_no_kk = no_kk
-        obj.pending_applicant_rt_id = rt_id
-        if alamat is not None:
-            obj.pending_applicant_alamat = alamat
-        obj.pending_applicant_jk = jk
-        obj.pending_applicant_tempat_lahir = tempat_lahir
-        obj.pending_applicant_tanggal_lahir = tanggal_lahir
-        obj.pending_applicant_pekerjaan = pekerjaan
-        obj.pending_applicant_status_kawin = status_kawin
-        await self.session.commit()
-        logger.info("Applicant data completed submission_id=%s", submission_id)
         return obj
 
     async def update_answers(self, submission_id: uuid.UUID, answers: dict[str, Any]) -> Submission:
@@ -498,25 +375,35 @@ class SubmissionService:
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
             raise ValidationAppError("Data formulir tidak bisa diedit untuk pengajuan yang ditolak")
         fields = await self._list_template_fields(obj.template_id)
-        applicant = await self.resolve_applicant_data_for_submission(obj)
+        applicant = await self.build_applicant_snapshot(obj)
         self._validate_answers(fields, answers, applicant)
         obj.answers = answers
         await self.session.commit()
         logger.info("Submission answers updated by staff submission_id=%s", submission_id)
         return obj
 
+    async def update_master_data(self, submission_id: uuid.UUID, data: dict[str, Any]) -> Submission:
+        """Staff fills in the shared identity block (alamat/RT/jk/tempat_
+        lahir/tanggal_lahir/pekerjaan/status_kawin/no_kk) from the citizen's
+        KTP/KK photo attachments -- what feeds the per-letter-type domain-
+        master table at issuance (`_build_domain_master_fields`) and blocks
+        Approve until complete for letter types that need it
+        (`get_missing_staff_fields`, `REQUIRED_STAFF_FIELDS_BY_JENIS`).
+        Full-replace semantics, same convention as `update_answers`.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
+            raise ValidationAppError("Data master tidak bisa diedit untuk pengajuan yang ditolak")
+        obj.staff_master_data = data
+        await self.session.commit()
+        logger.info("Submission master data updated submission_id=%s", submission_id)
+        return obj
+
     async def search_guest_submissions(self, nik: str) -> list[Submission]:
         """Find every guest/Mode-Loket submission matching the given NIK."""
-        resident = await self.session.scalar(
-            select(Resident).where(Resident.nik == nik, Resident.deleted_at.is_(None))
-        )
-        conditions = [Submission.pending_applicant_nik == nik]
-        if resident is not None:
-            conditions.append(Submission.applicant_resident_id == resident.id)
-
         stmt = (
             select(Submission)
-            .where(or_(*conditions), Submission.deleted_at.is_(None))
+            .where(Submission.applicant_nik == nik, Submission.deleted_at.is_(None))
             .order_by(Submission.created_at.desc())
         )
         return list((await self.session.scalars(stmt)).all())
@@ -623,55 +510,6 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
-    async def _materialize_pending_resident(self, submission: Submission) -> None:
-        """Write a guest submission's applicant to master data for the
-        first time, now that it has been approved (Bagian 5, Master Data
-        rework). No-op if the applicant was already linked (NIK existed at
-        submit time, or this isn't a guest submission at all).
-
-        A No. KK from `complete_applicant_data` resolves/creates the
-        matching FamilyCard; RT is optional. Neither is required -- staff
-        may approve before finishing that step, and the Resident is still
-        created (just without a family_card_id/rt_id yet).
-        """
-        if submission.applicant_resident_id is not None or submission.pending_applicant_nik is None:
-            return
-        family_card_id = None
-        if submission.pending_applicant_no_kk:
-            fc = await self.session.scalar(
-                select(FamilyCard).where(FamilyCard.kk_number == submission.pending_applicant_no_kk)
-            )
-            if fc is None:
-                fc = await FamilyCardService(self.session).create({
-                    "kk_number": submission.pending_applicant_no_kk,
-                })
-            family_card_id = fc.id
-        resident = await ResidentService(self.session).create({
-            "nik": submission.pending_applicant_nik,
-            "full_name": submission.pending_applicant_nama,
-            "address": submission.pending_applicant_alamat,
-            "family_card_id": family_card_id,
-            "rt_id": submission.pending_applicant_rt_id,
-            "gender": submission.pending_applicant_jk,
-            "birth_place": submission.pending_applicant_tempat_lahir,
-            "birth_date": submission.pending_applicant_tanggal_lahir,
-            "occupation": submission.pending_applicant_pekerjaan,
-            "marital_status": submission.pending_applicant_status_kawin,
-        })
-        submission.applicant_resident_id = resident.id
-        submission.pending_applicant_nik = None
-        submission.pending_applicant_nama = None
-        submission.pending_applicant_alamat = None
-        submission.pending_applicant_jk = None
-        submission.pending_applicant_tempat_lahir = None
-        submission.pending_applicant_tanggal_lahir = None
-        submission.pending_applicant_pekerjaan = None
-        submission.pending_applicant_status_kawin = None
-        logger.info(
-            "Pending applicant materialized into master data submission_id=%s resident_id=%s",
-            submission.id, resident.id,
-        )
-
     @staticmethod
     def _parse_date(value: Any) -> date | None:
         """Parse a form answer's date value ("YYYY-MM-DD" from an HTML date
@@ -738,6 +576,25 @@ class SubmissionService:
         carry their own "(Bila Ada)" marker in the label text itself."""
         docs = list(template.required_documents) + list(template.optional_documents)
         return ", ".join(docs) if docs else None
+
+    @staticmethod
+    def _pindah_anggota_summary(answers: dict[str, Any]) -> str | None:
+        """Rebuild the old free-text "Nama - NIK - SHDK, satu per baris"
+        summary from the numbered anggota_<n>_{nik,nama,shdk} fields
+        (06/08/2026: replaced the single free-text daftar_anggota_pindah
+        answer with N structured sub-forms -- MasterPindah's own column is
+        unchanged, only its source). 7 is _PINDAH_MAX_ANGGOTA in
+        app/seed/letter_template_data.py -- keep in sync if that changes.
+        """
+        lines = []
+        for n in range(1, 8):
+            nama = answers.get(f"anggota_{n}_nama")
+            if not nama:
+                continue
+            nik = answers.get(f"anggota_{n}_nik") or "-"
+            shdk = answers.get(f"anggota_{n}_shdk") or "-"
+            lines.append(f"{nama} - {nik} - {shdk}")
+        return "\n".join(lines) if lines else None
 
     async def _save_to_domain_master(
         self, submission: Submission, template: LetterTemplate, applicant: dict,
@@ -940,14 +797,14 @@ class SubmissionService:
                 alasan_pindah=answers.get("alasan_pindah"),
                 jenis_kepindahan=answers.get("jenis_kepindahan"),
                 anggota_yang_ikut=int(anggota) if anggota not in (None, "") else None,
-                daftar_anggota_pindah=answers.get("daftar_anggota_pindah"),
+                daftar_anggota_pindah=self._pindah_anggota_summary(answers),
                 submission_id=submission.id,
             ))
         elif code == "kk":
             # Real per-member data collection (F1.02/F1.06, up to 10
             # members) isn't built yet -- KK's citizen form still only asks
-            # status_perubahan/jumlah_anggota_keluarga/keterangan_perubahan
-            # (see KK_CATEGORY_DOCS docstring in seed data). Best-effort:
+            # status_perubahan (see KK_CATEGORY_DOCS docstring in seed
+            # data). Best-effort:
             # header fields from the applicant snapshot, applicant as
             # member #1 (they submitted the request, most often the kepala
             # keluarga), members 2-10 left null and schema-ready.
@@ -978,21 +835,21 @@ class SubmissionService:
             ))
 
     async def _issue(self, submission: Submission, actor: User) -> bytes:
-        """Allocate a real number, render the final PDF (plus any sub-
-        documents), save each as a new file, and mark ISSUED. Returns the
-        main PDF's bytes so the caller can attach it to the "issued"
-        notification (MASTER_COLUMN_LETTERS.md item 8)."""
-        await self._materialize_pending_resident(submission)
+        """Render the final PDF (plus any sub-documents), save each as a new
+        file, and mark ISSUED. Returns the main PDF's bytes so the caller
+        can attach it to the "issued" notification (MASTER_COLUMN_LETTERS.md
+        item 8).
+
+        The letter number is left blank (``nomor`` rendered as an empty
+        string) -- surat terbit belum ditandatangani, and staff fill in the
+        number by hand at the desa office along with the signature; there is
+        no automatic per-template/year sequence allocation.
+        """
         template = await self.template_repo.get(submission.template_id)
         fields = await self._list_template_fields(submission.template_id)
         village = await VillageProfileService(self.session).get()
-        applicant = await self.resolve_applicant_data_for_submission(submission)
+        applicant = await self.build_applicant_snapshot(submission)
 
-        year = datetime.now(timezone.utc).year
-        seq = await LetterNumberService(self.session).allocate(submission.template_id, year)
-        letter_number = template.numbering_pattern.format(
-            prefix=template.numbering_prefix, seq=seq, year=year
-        )
         now = datetime.now(timezone.utc)
         tanggal = format_tanggal_indonesia(now)
 
@@ -1005,12 +862,11 @@ class SubmissionService:
         file_service = TemplateFileService()
         pdf_bytes, storage_path = await file_service.render_and_save(
             template=template, fields=fields, profile=village,
-            answers=render_answers, applicant=applicant, nomor=letter_number,
+            answers=render_answers, applicant=applicant, nomor="",
             tanggal=tanggal,
         )
 
         submission.status = SubmissionStatus.ISSUED
-        submission.letter_number = letter_number
         submission.pdf_storage_path = storage_path
         submission.issued_at = now
 
@@ -1020,7 +876,7 @@ class SubmissionService:
                 sub_doc_code = sub_doc["code"]
                 _, sub_storage_path = await file_service.render_and_save_sub_document(
                     template=template, profile=village, answers=render_answers,
-                    applicant=applicant, nomor=letter_number, tanggal=tanggal,
+                    applicant=applicant, nomor="", tanggal=tanggal,
                     sub_doc_code=sub_doc_code,
                 )
                 sub_paths[sub_doc_code] = sub_storage_path
@@ -1034,9 +890,7 @@ class SubmissionService:
             submission_id=submission.id, step_index=submission.current_step_index,
             action=HistoryAction.ISSUED, actor_user_id=actor.id, note=None,
         ))
-        logger.info(
-            "Submission issued id=%s letter_number=%s", submission.id, letter_number,
-        )
+        logger.info("Submission issued id=%s", submission.id)
         return pdf_bytes
 
     async def regenerate_pdf(self, submission_id: uuid.UUID, actor: User) -> Submission:
@@ -1049,8 +903,8 @@ class SubmissionService:
         issuance (the "Setujui" flow only checks completeness once, at
         approval time), and the frozen PDF from `_issue()` doesn't pick that
         up on its own -- see the repeated "PDF sekali render" notes on
-        `_issue()`. Keeps the same letter_number (no new number allocated)
-        and does NOT re-run `_save_to_domain_master` (that already ran once
+        `_issue()`. The letter number stays blank (same as `_issue()`) and
+        this does NOT re-run `_save_to_domain_master` (that already ran once
         at real issuance; re-running would insert a duplicate domain-master
         row for the same submission).
         """
@@ -1060,7 +914,7 @@ class SubmissionService:
         template = await self.template_repo.get(obj.template_id)
         fields = await self._list_template_fields(obj.template_id)
         village = await VillageProfileService(self.session).get()
-        applicant = await self.resolve_applicant_data_for_submission(obj)
+        applicant = await self.build_applicant_snapshot(obj)
 
         issued_at = obj.issued_at or datetime.now(timezone.utc)
         tanggal = format_tanggal_indonesia(issued_at)
@@ -1075,7 +929,7 @@ class SubmissionService:
         file_service = TemplateFileService()
         _, storage_path = await file_service.render_and_save(
             template=template, fields=fields, profile=village,
-            answers=render_answers, applicant=applicant, nomor=obj.letter_number,
+            answers=render_answers, applicant=applicant, nomor="",
             tanggal=tanggal,
         )
         obj.pdf_storage_path = storage_path
@@ -1086,7 +940,7 @@ class SubmissionService:
                 sub_doc_code = sub_doc["code"]
                 _, sub_storage_path = await file_service.render_and_save_sub_document(
                     template=template, profile=village, answers=render_answers,
-                    applicant=applicant, nomor=obj.letter_number, tanggal=tanggal,
+                    applicant=applicant, nomor="", tanggal=tanggal,
                     sub_doc_code=sub_doc_code,
                 )
                 sub_paths[sub_doc_code] = sub_storage_path
@@ -1097,76 +951,50 @@ class SubmissionService:
             action=HistoryAction.PDF_REGENERATED, actor_user_id=actor.id, note=None,
         ))
         await self.session.commit()
-        logger.info(
-            "Submission PDF regenerated id=%s letter_number=%s by=%s",
-            obj.id, obj.letter_number, actor.id,
-        )
-        await AuditLogService(self.session).record(
-            actor, "generate_pdf", f"Generate ulang PDF surat {obj.letter_number}",
-            entity_type="submission", entity_id=obj.id,
-        )
+        logger.info("Submission PDF regenerated id=%s by=%s", obj.id, actor.id)
         return obj
 
-    # label -> Resident column, for the shared identity snapshot every
-    # letter type's PDF reads via _applicant_data_from_resident. These live
-    # on the Resident row (edited through the separate "Data Identitas
-    # Warga" panel), NOT in submission.answers/"Data Formulir" -- easy to
-    # miss since both look like "just more fields to fill in" from the
-    # detail page, so get_missing_staff_fields folds both checks into one
-    # combined list rather than staff having to know they're two different
-    # data stores.
-    _RESIDENT_IDENTITY_LABELS: dict[str, str] = {
-        "address": "Alamat (Data Identitas Warga)",
-        "rt_id": "RT (Data Identitas Warga)",
-        "gender": "Jenis Kelamin (Data Identitas Warga)",
-        "birth_place": "Tempat Lahir (Data Identitas Warga)",
-        "birth_date": "Tanggal Lahir (Data Identitas Warga)",
-        "occupation": "Pekerjaan (Data Identitas Warga)",
-        "marital_status": "Status Kawin (Data Identitas Warga)",
-    }
-    # Resident column -> Submission.pending_applicant_* attribute, for a
-    # guest whose NIK has no Resident row yet (still pending_applicant_nik,
-    # not applicant_resident_id) -- same fields, entered via "Lengkapi
-    # Data Pemohon" instead of "Data Identitas Warga" since there's no
-    # Resident row to edit until _materialize_pending_applicant runs.
-    _PENDING_IDENTITY_ATTRS: dict[str, str] = {
-        "address": "pending_applicant_alamat",
-        "rt_id": "pending_applicant_rt_id",
-        "gender": "pending_applicant_jk",
-        "birth_place": "pending_applicant_tempat_lahir",
-        "birth_date": "pending_applicant_tanggal_lahir",
-        "occupation": "pending_applicant_pekerjaan",
-        "marital_status": "pending_applicant_status_kawin",
+    # generic staff_master_data key -> label, for get_missing_staff_fields'
+    # REQUIRED_STAFF_FIELDS_BY_JENIS-driven completeness check.
+    _MASTER_DATA_LABELS: dict[str, str] = {
+        "alamat": "Alamat (Data Master)",
+        "rt_id": "RT (Data Master)",
+        "jk": "Jenis Kelamin (Data Master)",
+        "tempat_lahir": "Tempat Lahir (Data Master)",
+        "tanggal_lahir": "Tanggal Lahir (Data Master)",
+        "pekerjaan": "Pekerjaan (Data Master)",
+        "status_kawin": "Status Kawin (Data Master)",
+        "no_kk": "No. KK (Data Master)",
     }
 
     async def get_missing_staff_fields(self, submission: Submission) -> list[str]:
         """Labels of data staff still needs to fill in before Approve:
         is_staff_only TemplateFields blank in `answers` ("Data Formulir")
-        plus, if the applicant is already linked to a Resident, that
-        Resident's blank identity columns ("Data Identitas Warga").
+        plus, for letter types that need it, whichever
+        REQUIRED_STAFF_FIELDS_BY_JENIS keys are still blank in
+        `staff_master_data` ("Data Master", filled via PUT .../master-data
+        from the citizen's KTP/KK photo attachments -- 2026-08-06, replaces
+        the old Resident-identity-column check).
 
         is_staff_only fields are intentionally is_required=False so a
         CITIZEN's own submission never gets rejected for a field only staff
-        can supply (e.g. NIK ayah/ibu, alamat almarhum). But by the time
-        staff hits Approve, those fields should have been completed --
-        otherwise the issued PDF ships with blank placeholders. Used both to
+        can supply. But by the time staff hits Approve, both this and the
+        master-data block should be complete -- otherwise the issued PDF
+        and domain-master row ship with blank placeholders. Used both to
         hard-block approve() and to warn on the detail page before the click.
         """
         fields = await self._list_template_fields(submission.template_id)
         answers = submission.answers or {}
         missing = [f.label for f in fields if f.is_staff_only and not answers.get(f.field_key)]
 
-        if submission.applicant_resident_id is not None:
-            resident = await self.session.get(Resident, submission.applicant_resident_id)
-            if resident is not None:
-                missing += [
-                    label for column, label in self._RESIDENT_IDENTITY_LABELS.items()
-                    if not getattr(resident, column)
-                ]
-        elif submission.pending_applicant_nik is not None:
+        template = await self.template_repo.get(submission.template_id)
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
+        if jenis:
+            draft = submission.staff_master_data or {}
             missing += [
-                label for column, label in self._RESIDENT_IDENTITY_LABELS.items()
-                if not getattr(submission, self._PENDING_IDENTITY_ATTRS[column])
+                self._MASTER_DATA_LABELS[key]
+                for key in REQUIRED_STAFF_FIELDS_BY_JENIS.get(jenis, [])
+                if not draft.get(key)
             ]
         return missing
 
@@ -1180,19 +1008,18 @@ class SubmissionService:
     async def approve(
         self, submission_id: uuid.UUID, actor: User, note: str | None
     ) -> Submission:
-        """Advance a submission one step, or issue it if this was the final step."""
+        """Advance a submission one step, or issue it if this was the final step.
+
+        No role-gating per step -- anyone holding the `submission:approve`
+        permission (endpoint-level gate) may act at any step of the fixed
+        `APPROVAL_STEP_COUNT`-step chain.
+        """
         obj = await self.get_or_404(submission_id)
         if obj.status != SubmissionStatus.PENDING:
             raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
         await self._check_staff_only_fields_filled(obj)
-        steps = await ApprovalStepConfigService(self.session).list_steps()
-        if not steps:
-            raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
-        current_step = steps[obj.current_step_index]
-        if current_step.role_id != actor.role_id:
-            raise ForbiddenError("Bukan giliran Anda untuk memproses pengajuan ini")
 
-        is_last_step = obj.current_step_index == len(steps) - 1
+        is_last_step = obj.current_step_index == APPROVAL_STEP_COUNT - 1
         issued_pdf: bytes | None = None
         if is_last_step:
             issued_pdf = await self._issue(obj, actor)
@@ -1206,11 +1033,11 @@ class SubmissionService:
         logger.info("Submission approve processed id=%s by=%s", obj.id, actor.id)
         await AuditLogService(self.session).record(
             actor, "approve",
-            f"Menyetujui pengajuan {obj.letter_number or obj.id}" + (" (surat terbit)" if is_last_step else ""),
+            f"Menyetujui pengajuan {obj.id}" + (" (surat terbit)" if is_last_step else ""),
             entity_type="submission", entity_id=obj.id,
         )
         if is_last_step:
-            attachment = (f"{obj.letter_number or obj.id}.pdf", issued_pdf) if issued_pdf else None
+            attachment = (f"{obj.id}.pdf", issued_pdf) if issued_pdf else None
             await self._notify(
                 obj, "issued", "Surat Anda telah terbit dan siap diambil di kantor desa.",
                 attachment=attachment,
@@ -1223,16 +1050,12 @@ class SubmissionService:
         return obj
 
     async def reject(self, submission_id: uuid.UUID, actor: User, reason: str) -> Submission:
-        """Reject a submission (terminal) with a mandatory reason."""
+        """Reject a submission (terminal) with a mandatory reason.
+
+        No role-gating per step -- see `approve`'s docstring."""
         obj = await self.get_or_404(submission_id)
         if obj.status != SubmissionStatus.PENDING:
             raise ValidationAppError("Pengajuan ini sudah tidak dalam status menunggu proses")
-        steps = await ApprovalStepConfigService(self.session).list_steps()
-        if not steps:
-            raise ValidationAppError("Alur persetujuan desa belum dikonfigurasi")
-        current_step = steps[obj.current_step_index]
-        if current_step.role_id != actor.role_id:
-            raise ForbiddenError("Bukan giliran Anda untuk memproses pengajuan ini")
 
         obj.status = SubmissionStatus.REJECTED
         obj.rejection_reason = reason
@@ -1286,14 +1109,14 @@ class SubmissionService:
         unsigned_preview_ok = (
             template is not None and template.code == "na" and sub_doc_code in ("na_n4", "na_n5")
         )
-        if not unsigned_preview_ok and (obj.status != SubmissionStatus.ISSUED or obj.letter_number is None):
+        if not unsigned_preview_ok and obj.status != SubmissionStatus.ISSUED:
             raise ValidationAppError("Surat belum terbit")
         can_read_all = "*" in actor_permissions or "submission:read_all" in actor_permissions
         if not can_read_all and obj.submitted_by_user_id != actor_user_id:
             raise ForbiddenError("Anda tidak berhak mengunduh surat ini")
         if unsigned_preview_ok and obj.status != SubmissionStatus.ISSUED:
             village = await VillageProfileService(self.session).get()
-            applicant = await self.resolve_applicant_data_for_submission(obj)
+            applicant = await self.build_applicant_snapshot(obj)
             tanggal = format_tanggal_indonesia(datetime.now(timezone.utc))
             return TemplateRenderService().render_issued_sub_document(
                 template=template, profile=village, answers=obj.answers, applicant=applicant,
@@ -1303,9 +1126,9 @@ class SubmissionService:
         if saved_path:
             return await FileStorageService().read(saved_path)
         village = await VillageProfileService(self.session).get()
-        applicant = await self.resolve_applicant_data_for_submission(obj)
+        applicant = await self.build_applicant_snapshot(obj)
         tanggal = format_tanggal_indonesia(obj.issued_at or datetime.now(timezone.utc))
         return TemplateRenderService().render_issued_sub_document(
             template=template, profile=village, answers=obj.answers, applicant=applicant,
-            nomor=obj.letter_number, tanggal=tanggal, sub_doc_code=sub_doc_code,
+            nomor="", tanggal=tanggal, sub_doc_code=sub_doc_code,
         )

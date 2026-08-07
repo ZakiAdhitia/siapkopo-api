@@ -1,12 +1,12 @@
 """Read-only browsing endpoints for the per-letter-type domain master tables.
 
-Gated by the existing `resident:read` permission (staff/admin already hold
-it for the universal Resident master data) rather than a new permission
-code -- these tables are just that same "master data" concept, split per
-letter type (see app/models/master.py's module docstring).
+Gated by `master_data:read`/`master_data:export` (2026-08-06: renamed from
+resident:read/export when the Resident/FamilyCard population registry was
+removed -- these codes always meant "master data" broadly, this just makes
+that explicit now that there's no more Resident to misleadingly name them
+after; see app/models/master.py's module docstring).
 """
 import io
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -14,9 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
-from app.dependencies.auth import CurrentUser, require_permission
-from app.repositories.auth import UserRepository
-from app.services.audit_log import AuditLogService
+from app.dependencies.auth import require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
 from app.schemas.common import Page, build_page
 from app.schemas.domain_master import (
@@ -51,15 +49,11 @@ router = APIRouter(tags=["domain-master-data"])
 async def export_domain_master(
     jenis: str = Query(..., description="|".join(DOMAIN_MASTER_SERVICES)),
     session: AsyncSession = Depends(get_db),
-    current: CurrentUser = Depends(require_permission("resident:export")),
+    _=Depends(require_permission("master_data:export")),
 ) -> StreamingResponse:
     """Export one domain master-data table (KK/domisili/NA/.../ubah_data) as
     an xlsx download (HASIL_UJICOBA_PERROLE.md, kades item 5)."""
     data = await export_domain_master_excel(session, jenis)
-    actor = await UserRepository(session).get_by_id(UUID(current.id))
-    await AuditLogService(session).record(
-        actor, "export", f"Export master data '{jenis}' ke Excel", entity_type="master_data",
-    )
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -72,7 +66,7 @@ async def list_master_domisili(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List Domisili master data, paginated, searchable by NIK/nama."""
     items, total = await MasterDomisiliService(session).list(p.page, p.size, search=search)
@@ -84,7 +78,7 @@ async def list_master_kelahiran(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List Kelahiran master data, paginated, searchable by nama anak/NIK ortu."""
     items, total = await MasterKelahiranService(session).list(p.page, p.size, search=search)
@@ -96,7 +90,7 @@ async def list_master_kematian(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List Kematian master data, paginated, searchable by NIK/nama almarhum."""
     items, total = await MasterKematianService(session).list(p.page, p.size, search=search)
@@ -108,7 +102,7 @@ async def list_master_sku(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List SKU master data, paginated, searchable by NIK/nama pemohon."""
     items, total = await MasterSKUService(session).list(p.page, p.size, search=search)
@@ -120,7 +114,7 @@ async def list_master_na(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List NA master data, paginated, searchable by NIK/nama calon or pasangan."""
     items, total = await MasterNAService(session).list(p.page, p.size, search=search)
@@ -132,7 +126,7 @@ async def list_master_uhc(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List UHC master data, paginated, searchable by NIK/nama pasien."""
     items, total = await MasterUHCService(session).list(p.page, p.size, search=search)
@@ -144,7 +138,7 @@ async def list_master_pindah(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List Pindah master data, paginated, searchable by NIK/nama pemohon."""
     items, total = await MasterPindahService(session).list(p.page, p.size, search=search)
@@ -156,7 +150,7 @@ async def list_master_kk(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List KK master data, paginated, searchable by No. KK/nama kepala keluarga."""
     items, total = await MasterKKService(session).list(p.page, p.size, search=search)
@@ -168,7 +162,7 @@ async def list_master_ubah_data(
     session: AsyncSession = Depends(get_db),
     p: PaginationParams = Depends(pagination_params),
     search: str | None = Query(None),
-    _=Depends(require_permission("resident:read")),
+    _=Depends(require_permission("master_data:read")),
 ) -> dict:
     """List Ubah Data master data, paginated, searchable by NIK/nama."""
     items, total = await MasterUbahDataService(session).list(p.page, p.size, search=search)

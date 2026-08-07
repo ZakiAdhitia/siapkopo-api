@@ -2,51 +2,29 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, GUID, SoftDeleteMixin, TimestampMixin, UUIDMixin
 
-role_permissions = Table(
-    "role_permissions",
-    Base.metadata,
-    Column("role_id", GUID(), ForeignKey("roles.id"), primary_key=True),
-    Column("permission_id", GUID(), ForeignKey("permissions.id"), primary_key=True),
-)
-
-position_permissions = Table(
-    "position_permissions",
-    Base.metadata,
-    Column("position_id", GUID(), ForeignKey("positions.id"), primary_key=True),
-    Column("permission_id", GUID(), ForeignKey("permissions.id"), primary_key=True),
-)
-
-
-class Permission(UUIDMixin, TimestampMixin, Base):
-    """A single grantable permission code (e.g. ``resident:read``)."""
-
-    __tablename__ = "permissions"
-    code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
 
 class Role(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """A named role granting a set of permissions to users."""
+    """A named role. Effective permissions are resolved purely from
+    ``app.permissions.registry.ROLE_PERMISSIONS`` by role name -- no
+    permission data is stored in the database (see ``AuthService.permissions_for``)."""
 
     __tablename__ = "roles"
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    permissions: Mapped[list[Permission]] = relationship(
-        secondary=role_permissions, lazy="selectin"
-    )
 
 
 class Position(UUIDMixin, TimestampMixin, Base):
     """A jabatan (position): hierarchy level + optional extra permissions.
 
     Separate dimension from Role -- a user's effective permissions are the
-    union of their Role's and their Position's permission rows (see
+    union of their Role's and their Position's permission codes, both
+    resolved from ``app.permissions.registry`` by name/slug (see
     ``AuthService.permissions_for``). Fixed reference data, seeded; no CRUD
     API by design (see the rework spec).
     """
@@ -55,9 +33,6 @@ class Position(UUIDMixin, TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(100))
     level: Mapped[int] = mapped_column()
-    permissions: Mapped[list[Permission]] = relationship(
-        secondary=position_permissions, lazy="selectin"
-    )
 
 
 class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
@@ -72,14 +47,9 @@ class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     email: Mapped[str | None] = mapped_column(String(150), unique=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[uuid.UUID] = mapped_column(GUID(), ForeignKey("roles.id"))
-    resident_id: Mapped[uuid.UUID | None] = mapped_column(
-        GUID(), ForeignKey("residents.id"), nullable=True
-    )
     position_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("positions.id"), nullable=True
     )
-    rt_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("rt.id"), nullable=True)
-    rw_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("rw.id"), nullable=True)
     pending_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     role: Mapped[Role] = relationship(lazy="selectin")
     position: Mapped[Position | None] = relationship(lazy="selectin")

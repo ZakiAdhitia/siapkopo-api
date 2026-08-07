@@ -2,7 +2,8 @@ import pytest
 from sqlalchemy import select
 
 from app.core.exceptions import UnauthorizedError
-from app.models.auth import Permission, Position, Role, User
+from app.models.auth import Position, Role, User
+from app.permissions import registry
 from app.seed.seed import seed_rbac
 from app.services.auth import AuthService
 
@@ -71,11 +72,9 @@ async def test_refresh_rejects_reused_rotated_token(seeded_session):
 
 
 @pytest.mark.asyncio
-async def test_permissions_for_administrator_is_wildcard_from_db(seeded_session):
+async def test_permissions_for_administrator_is_wildcard(seeded_session):
     svc = AuthService(seeded_session)
     user = await svc.users.get_by_username("operator")
-    codes = [p.code for p in user.role.permissions]
-    assert codes == ["*"]
     assert svc.permissions_for(user) == ["*"]
 
 
@@ -85,11 +84,11 @@ async def test_permissions_for_staf_is_concrete_codes(seeded_session):
     user = await svc.users.get_by_username("staf")
     perms = svc.permissions_for(user)
     assert "*" not in perms
-    assert "resident:read" in perms
+    assert "master_data:read" in perms
 
 
 @pytest.mark.asyncio
-async def test_permissions_for_unions_role_and_position(seeded_session):
+async def test_permissions_for_unions_role_and_position(seeded_session, monkeypatch):
     svc = AuthService(seeded_session)
     user = await svc.users.get_by_username("rt001")
     # Position "rt" grants nothing yet in this part of the rework, but the
@@ -97,19 +96,11 @@ async def test_permissions_for_unions_role_and_position(seeded_session):
     perms = svc.permissions_for(user)
     assert "submission:create" in perms
 
-    # Directly attach an extra permission to Position "rt" and confirm the
-    # union picks it up without going through the Role at all. Uses a
-    # placeholder code rather than a real seeded one, to avoid colliding
-    # with an actual Position permission on insert.
-    position = await seeded_session.scalar(
-        select(Position).where(Position.slug == "rt")
+    # Patch the code registry's Position "rt" grant and confirm the union
+    # picks it up without going through the Role at all.
+    monkeypatch.setitem(
+        registry.POSITION_PERMISSIONS, "rt", ["test:placeholder_position_permission"]
     )
-    extra = Permission(code="test:placeholder_position_permission")
-    seeded_session.add(extra)
-    await seeded_session.flush()
-    position.permissions.append(extra)
-    await seeded_session.commit()
-    await seeded_session.refresh(user)
     perms_after = svc.permissions_for(user)
     assert "test:placeholder_position_permission" in perms_after
     assert "submission:create" in perms_after  # role grant still present
@@ -117,15 +108,12 @@ async def test_permissions_for_unions_role_and_position(seeded_session):
 
 @pytest.mark.asyncio
 async def test_seed_rbac_is_idempotent(seeded_session):
-    """Re-running seed_rbac must not duplicate permission or role rows."""
-    perms_before = (await seeded_session.scalars(select(Permission))).all()
+    """Re-running seed_rbac must not duplicate role rows."""
     roles_before = (await seeded_session.scalars(select(Role))).all()
 
     await seed_rbac(seeded_session)
 
-    perms_after = (await seeded_session.scalars(select(Permission))).all()
     roles_after = (await seeded_session.scalars(select(Role))).all()
-    assert len(perms_after) == len(perms_before)
     assert len(roles_after) == len(roles_before)
 
 
@@ -160,84 +148,6 @@ async def test_seed_rbac_corrects_stale_role_on_reseed(seeded_session):
     await seeded_session.refresh(user)
     assert user.role_id == correct_role_id
     assert user.position_id == correct_position_id
-
-
-@pytest.mark.asyncio
-async def test_register_rt_matches_resident_is_pending(seeded_session):
-    """Registering as rt with a NIK that matches a seeded Resident still
-    requires approval -- plain "warga" self-registration doesn't exist
-    anymore (Bagian 6, STRATEGI doc rev. 2026-07-26), so EVERY position_choice
-    (staff/rt/rw) is created pending, never immediately active.
-
-    Uses Ahmad Fauzi's resident NIK (seed suffix "0011" -> "3516" +
-    "0011".zfill(12) -> "3516000000000011", per seed_master's nik formula).
-    Deliberately NOT the demo "warga" account's own nik ("3516064588020003",
-    an arbitrary DEMO_ACCOUNTS value unrelated to any Resident row) and NOT
-    "Siti Rohmah" (already linked to the demo "warga" user by
-    seed_link_demo_resident, which would make this a ConflictError case
-    instead of the success case this test wants).
-    """
-    from sqlalchemy import select as _select
-
-    from app.models.master import Resident
-    from app.seed.seed import seed_master
-    await seed_master(seeded_session)
-    resident = await seeded_session.scalar(
-        _select(Resident).where(Resident.nik == "3516000000000011")
-    )
-    svc = AuthService(seeded_session)
-    user, is_active = await svc.register({
-        "full_name": "Ahmad Fauzi Baru", "username": "ahmadfauzi2",
-        "password": "password123", "email": "ahmadfauzi2@example.test",
-        "position_choice": "rt", "nik": "3516000000000011",
-        "rt_id": resident.rt_id, "rw_id": None,
-    })
-    assert is_active is False
-    assert user.is_active is False
-    assert user.pending_approval is True
-    assert user.resident_id is not None
-    assert user.role.name == "warga"
-    assert user.position.slug == "rt"
-
-
-@pytest.mark.asyncio
-async def test_register_rt_unknown_nik_rejected(seeded_session):
-    from app.core.exceptions import ValidationAppError
-    svc = AuthService(seeded_session)
-    with pytest.raises(ValidationAppError):
-        await svc.register({
-            "full_name": "Orang Asing", "username": "orangasing",
-            "password": "password123", "email": "asing@example.test",
-            "position_choice": "rt", "nik": "9999999999999999",
-            "rt_id": None, "rw_id": None,
-        })
-
-
-@pytest.mark.asyncio
-async def test_register_staff_is_pending(seeded_session):
-    svc = AuthService(seeded_session)
-    user, is_active = await svc.register({
-        "full_name": "Staf Baru", "username": "stafbaru",
-        "password": "password123", "email": "stafbaru@example.test",
-        "position_choice": "staff", "nik": None, "rt_id": None, "rw_id": None,
-    })
-    assert is_active is False
-    assert user.is_active is False
-    assert user.pending_approval is True
-    assert user.role.name == "staff"
-    assert user.position.slug == "staff_desa"
-
-
-@pytest.mark.asyncio
-async def test_register_duplicate_username_rejected(seeded_session):
-    from app.core.exceptions import ConflictError
-    svc = AuthService(seeded_session)
-    with pytest.raises(ConflictError):
-        await svc.register({
-            "full_name": "Duplikat", "username": "staf",  # already a demo account
-            "password": "password123", "email": "dup@example.test",
-            "position_choice": "staff", "nik": None, "rt_id": None, "rw_id": None,
-        })
 
 
 @pytest.mark.asyncio

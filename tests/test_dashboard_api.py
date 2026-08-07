@@ -1,8 +1,5 @@
 """Integration tests for the dashboard aggregation endpoints."""
 import pytest
-from sqlalchemy import select
-
-from app.models.auth import Role
 
 
 async def _headers(client, username, password):
@@ -11,12 +8,13 @@ async def _headers(client, username, password):
     return {"Authorization": f"Bearer {tok}"}
 
 
-async def _setup_and_submit(client, db_session):
-    # 2026-08-05: template create/field-add/approval-step-config now require
-    # template:manage/approval_config:manage, which Kepala Desa (kades) no
-    # longer holds (HASIL_UJICOBA_PERROLE.md kades items 1/4) -- use the
-    # unrestricted "operator" (administrator-it, "*") account for setup,
-    # same pattern as test_submission_api.py's _setup_village_template_workflow.
+async def _setup_and_submit(client):
+    # 2026-08-05: template create/field-add requires template:manage, which
+    # Kepala Desa (kades) no longer holds (HASIL_UJICOBA_PERROLE.md kades
+    # item 1) -- use the unrestricted "operator" (administrator-it, "*")
+    # account for setup, same pattern as test_submission_api.py's
+    # _setup_village_template_workflow. The approval chain itself is a fixed
+    # 2-step sequence (APPROVAL_STEP_COUNT), not configured per-test.
     h = await _headers(client, "operator", "operator123")
     template = await client.post("/api/v1/templates", json={
         "code": "dashuji", "name": "Surat Dashboard Uji",
@@ -29,20 +27,17 @@ async def _setup_and_submit(client, db_session):
     await client.post(f"/api/v1/templates/{template_id}/fields", json={
         "field_key": "catatan", "label": "Catatan", "field_type": "text", "is_required": True,
     }, headers=h)
-    roles = {r.name: str(r.id) for r in (await db_session.scalars(select(Role))).all()}
-    await client.put("/api/v1/approval-steps", json={
-        "steps": [{"role_id": roles["staff"]}, {"role_id": roles["admin"]}],
-    }, headers=h)
 
     wh = await _headers(client, "warga", "warga123")
     await client.post("/api/v1/submissions", json={
         "template_id": template_id, "answers": {"catatan": "uji dashboard"},
+        "applicant_nik": "3516000000000201", "applicant_nama": "Warga Dashboard",
     }, headers=wh)
 
 
 @pytest.mark.asyncio
-async def test_stats_and_inbox_reflect_pending_submission(client, db_session):
-    await _setup_and_submit(client, db_session)
+async def test_stats_and_inbox_reflect_pending_submission(client):
+    await _setup_and_submit(client)
     h = await _headers(client, "staf", "staf123")
 
     stats = await client.get("/api/v1/dashboard/stats", headers=h)

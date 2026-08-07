@@ -43,12 +43,11 @@ from ._uhc import UHCRenderer
 def _finalize_none(value):
     """Jinja `finalize`: applied to every `{{ expression }}`'s value right
     before it's written to the output. Without this, a None value (e.g. an
-    applicant snapshot field like `rt`/`rw` that's genuinely unset on the
-    Resident record -- common for a freshly-created guest/walk-in resident)
-    renders as the literal text "None" in a government letter. Existing
-    `{{ field or '-' }}` guards already produce '-' before this ever sees
-    None, so this is a safety net for the ones that don't, not a
-    replacement for them."""
+    applicant snapshot field like `rt`/`rw` that staff hasn't filled in yet
+    via the master-data panel) renders as the literal text "None" in a
+    government letter. Existing `{{ field or '-' }}` guards already produce
+    '-' before this ever sees None, so this is a safety net for the ones
+    that don't, not a replacement for them."""
     return "-" if value is None else value
 
 
@@ -124,8 +123,8 @@ class TemplateRenderService:
         Prefers the real-Word-file pipeline (`DocxLetterRenderer`,
         2026-08-01 -- "benar-benar dipakai langsung") when a prepared
         template exists for this letter type; falls back to the
-        hand-authored HTML/Jinja renderer otherwise (`pindah`/`kk`, which
-        have no docx template yet).
+        hand-authored HTML/Jinja renderer otherwise (currently only
+        `ubah_data`, which has no docx template yet).
         """
         if self._docx_renderer.supports(template.code):
             context = self._docx_context(profile, answers, applicant, nomor, tanggal)

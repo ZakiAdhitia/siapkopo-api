@@ -55,3 +55,19 @@ def require_permission(code: str) -> Callable:
         raise ForbiddenError(f"Tidak memiliki izin: {code}")
 
     return _dep
+
+
+def require_any_permission(*codes: str) -> Callable:
+    """Dependency factory enforcing at least one of several permission codes.
+
+    Use for endpoints shared by two otherwise-unrelated features (e.g. the
+    Role catalog is read both by the approval-step picker and the user
+    management screen), so each caller keeps its own permission boundary.
+    """
+
+    async def _dep(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if "*" in user.permissions or any(c in user.permissions for c in codes):
+            return user
+        raise ForbiddenError(f"Tidak memiliki izin: {' / '.join(codes)}")
+
+    return _dep

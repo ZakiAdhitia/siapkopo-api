@@ -21,7 +21,6 @@ from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, Va
 from app.core.logging import get_logger
 from app.core.security import hash_password
 from app.models.auth import Position, Role, User
-from app.models.master import RT, RW
 from app.repositories.base import BaseRepository
 from app.services.notification import LoggingNotificationProvider
 
@@ -137,28 +136,11 @@ class UserManagementService:
         ):
             raise ConflictError("Email sudah digunakan")
 
-        rt_id, rw_id = None, None
-        if position.slug == "rt":
-            if not data.get("rt_id"):
-                raise ValidationAppError("rt_id wajib diisi untuk posisi RT")
-            rt = await self.session.get(RT, data["rt_id"])
-            if rt is None:
-                raise ValidationAppError("RT tidak ditemukan")
-            rt_id = rt.id
-        elif position.slug == "rw":
-            if not data.get("rw_id"):
-                raise ValidationAppError("rw_id wajib diisi untuk posisi RW")
-            rw = await self.session.get(RW, data["rw_id"])
-            if rw is None:
-                raise ValidationAppError("RW tidak ditemukan")
-            rw_id = rw.id
-
         role = await self._resolve_role_for_position(position)
         user = User(
             username=username, nik=data.get("nik"), full_name=data["full_name"],
             hashed_password=hash_password(data["password"]), email=data["email"],
             phone=data.get("phone"), role_id=role.id, position_id=position.id,
-            resident_id=data.get("resident_id"), rt_id=rt_id, rw_id=rw_id,
             is_active=True, pending_approval=False,
         )
         # See AuthService.register's identical comment: a freshly constructed
@@ -210,11 +192,6 @@ class UserManagementService:
             target.position_id = new_position.id
             target.role = new_role
             target.role_id = new_role.id
-
-        if "rt_id" in data:
-            target.rt_id = data["rt_id"]
-        if "rw_id" in data:
-            target.rw_id = data["rw_id"]
 
         await self.session.commit()
         logger.info("User updated by admin actor_id=%s target_id=%s", actor.id, target.id)

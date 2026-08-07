@@ -3,8 +3,6 @@ from sqlalchemy import select
 
 from app.core.exceptions import ForbiddenError, ValidationAppError
 from app.models.auth import Role, User
-from app.models.master import VillageProfile
-from app.services.approval_config import ApprovalStepConfigService
 from app.services.letter_template import LetterTemplateService
 from app.services.submission import SubmissionService
 
@@ -44,7 +42,10 @@ async def test_create_validates_required_fields(seeded_session):
 
     svc = SubmissionService(seeded_session)
     with pytest.raises(ValidationAppError):
-        await svc.create(user, template.id, {"alamat_tinggal_saat_ini": ""})  # missing keperluan
+        await svc.create(
+            user, template.id, {"alamat_tinggal_saat_ini": ""},  # missing keperluan
+            "3516000000000001", "Warga Test",
+        )
 
 
 @pytest.mark.asyncio
@@ -56,7 +57,7 @@ async def test_create_validates_select_options(seeded_session):
     with pytest.raises(ValidationAppError):
         await svc.create(user, template.id, {
             "alamat_tinggal_saat_ini": "Jl. A", "keperluan": "NotAnOption",
-        })
+        }, "3516000000000002", "Warga Test")
 
 
 @pytest.mark.asyncio
@@ -67,7 +68,7 @@ async def test_create_succeeds_with_valid_answers(seeded_session):
     svc = SubmissionService(seeded_session)
     obj = await svc.create(user, template.id, {
         "alamat_tinggal_saat_ini": "Jl. A", "keperluan": "Bank",
-    })
+    }, "3516000000000003", "Warga Test")
     assert obj.status.value == "pending"
     assert obj.current_step_index == 0
 
@@ -93,7 +94,7 @@ async def test_add_attachment_validates_document_label(seeded_session, tmp_path,
     user = await _make_warga_user(seeded_session, "warga_att")
 
     svc = SubmissionService(seeded_session)
-    submission = await svc.create(user, template.id, {})
+    submission = await svc.create(user, template.id, {}, "3516000000000004", "Warga Test")
 
     with pytest.raises(ValidationAppError):
         await svc.add_attachment(
@@ -112,19 +113,16 @@ async def test_add_attachment_validates_document_label(seeded_session, tmp_path,
 
 
 async def _setup_pending_submission(session):
-    """Village profile + 2-step workflow (staff, admin) + one PENDING submission.
+    """A letter template + one PENDING submission.
 
-    The village profile singleton is seeded directly here (there's no
-    create()/POST for it -- see VillageProfileService) since the final
-    approval step's PDF issuance reads it via VillageProfileService.get().
+    The village identity used by the final approval step's PDF issuance
+    (VillageProfileService.get()) is hardcoded, not seeded (see
+    app.models.master.VillageProfile's docstring).
 
-    Note: the old 3-role catalog had a 3-step staf/sekretaris/kades chain;
-    the new 4-role catalog only distinguishes "staff" and "admin" here
-    (sekretaris_desa and kepala_desa now share the "admin" Role), so the
-    fixture seeds a 2-step chain instead. See app.seed.seed.seed_approval_steps.
+    The approval chain is a fixed `SubmissionService.APPROVAL_STEP_COUNT`-
+    step sequence with no per-step role gating -- anyone holding
+    submission:approve may act at any step (see approve()'s docstring).
     """
-    session.add(VillageProfile(name="Desa Kopo"))
-    await session.flush()
     tsvc = LetterTemplateService(session)
     template = await tsvc.create({
         "code": "domisili", "name": "Surat Domisili",
@@ -137,9 +135,6 @@ async def _setup_pending_submission(session):
         "is_required": True,
     })
     roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
-    await ApprovalStepConfigService(session).replace_all(
-        [roles["staff"].id, roles["admin"].id]
-    )
     warga = User(username="warga_flow", full_name="Warga Flow", hashed_password="x",
                  role_id=roles["warga"].id)
     staff = User(username="staff_flow", full_name="Staff Flow", hashed_password="x",
@@ -150,15 +145,43 @@ async def _setup_pending_submission(session):
     await session.flush()
 
     svc = SubmissionService(session)
-    submission = await svc.create(warga, template.id, {"alamat_tinggal_saat_ini": "Jl. Uji 1"})
+    submission = await svc.create(
+        warga, template.id, {"alamat_tinggal_saat_ini": "Jl. Uji 1"},
+        "3516000000000099", "Warga Flow",
+    )
+    # domisili's REQUIRED_STAFF_FIELDS_BY_JENIS block (2026-08-06) -- needed
+    # for the tests in this file that approve() all the way to issuance.
+    submission.staff_master_data = {
+        "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1990-01-01",
+        "pekerjaan": "Petani", "status_kawin": "Kawin",
+    }
+    await session.flush()
     return svc, submission, {"warga": warga, "staff": staff, "admin": admin}
 
 
 @pytest.mark.asyncio
-async def test_approve_wrong_turn_rejected(seeded_session):
+async def test_approve_out_of_turn_still_succeeds(seeded_session):
+    """No per-step role gating: admin may approve the first step directly
+    (previously "staff's turn"), advancing the chain like anyone else with
+    submission:approve."""
     svc, submission, users = await _setup_pending_submission(seeded_session)
-    with pytest.raises(ForbiddenError):
-        await svc.approve(submission.id, users["admin"], None)  # staff's turn, not admin
+    advanced = await svc.approve(submission.id, users["admin"], None)
+    assert advanced.current_step_index == 1
+    assert advanced.status.value == "pending"
+
+
+@pytest.mark.asyncio
+async def test_approve_same_actor_completes_full_chain(seeded_session):
+    """A single actor (e.g. staff) may call approve() through every step to
+    issuance without waiting for a different role -- the chain no longer
+    restricts who may act at each step."""
+    svc, submission, users = await _setup_pending_submission(seeded_session)
+    await svc.approve(submission.id, users["staff"], "ok")
+    issued = await svc.approve(submission.id, users["staff"], "signed")
+    assert issued.status.value == "issued"
+    # Left blank -- no automatic numbering (see SubmissionService._issue's
+    # docstring); staff fill it in by hand at the desa office.
+    assert issued.letter_number is None
 
 
 @pytest.mark.asyncio
@@ -171,7 +194,7 @@ async def test_approve_full_chain_issues_pdf(seeded_session):
 
     s2 = await svc.approve(submission.id, users["admin"], "signed")
     assert s2.status.value == "issued"
-    assert s2.letter_number is not None
+    assert s2.letter_number is None
     assert s2.pdf_storage_path is not None
     assert s2.issued_at is not None
 
