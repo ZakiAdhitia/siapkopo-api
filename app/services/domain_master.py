@@ -272,6 +272,71 @@ STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
     ]}],
 }
 
+
+def _flatten_extra_data(jenis: str, extra: dict) -> dict:
+    """Flatten Submission.staff_extra_data's nested per-jenis shape back
+    into the flat field-key names the docx/HTML letter templates and
+    SubmissionService._save_to_domain_master already expect -- these were
+    previously supplied by the citizen's own `answers` before Fase 1 of
+    ALUR_REVIEW_INPUT_MASTER.md moved them to staff sesi input. Called from
+    SubmissionService.build_applicant_snapshot so every existing consumer of
+    the `applicant` dict picks these up with zero further changes."""
+    if jenis == "domisili":
+        return {
+            "alamat_asal": extra.get("alamat_asal"), "rt_asal": extra.get("rt_asal"),
+            "rw_asal": extra.get("rw_asal"), "kel_desa_asal": extra.get("kel_desa_asal"),
+            "kec_asal": extra.get("kec_asal"), "kab_kota_asal": extra.get("kab_kota_asal"),
+            "provinsi_asal": extra.get("provinsi_asal"), "masa_berlaku_bulan": extra.get("masa_berlaku_bulan"),
+        }
+    if jenis == "kematian":
+        return {
+            "jk_almarhum": extra.get("jk"), "tempat_lahir_almarhum": extra.get("tempat_lahir"),
+            "tanggal_lahir_almarhum": extra.get("tanggal_lahir"), "usia_tahun": extra.get("usia_tahun"),
+            "pekerjaan_almarhum": extra.get("pekerjaan"), "alamat_almarhum": extra.get("alamat"),
+            "rt_almarhum": extra.get("rt"), "rw_almarhum": extra.get("rw"),
+        }
+    if jenis == "kelahiran":
+        anak, ayah, ibu = extra.get("anak") or {}, extra.get("ayah") or {}, extra.get("ibu") or {}
+        return {
+            "gender_anak": anak.get("jk"), "tempat_lahir_anak": anak.get("tempat_lahir"),
+            "tgl_lahir_anak": anak.get("tanggal_lahir"), "jam_lahir_anak": anak.get("jam_lahir"),
+            "anak_ke": anak.get("anak_ke"),
+            "tempat_lahir_ayah": ayah.get("tempat_lahir"), "tanggal_lahir_ayah": ayah.get("tanggal_lahir"),
+            "pekerjaan_ayah": ayah.get("pekerjaan"), "alamat_ayah": ayah.get("alamat"),
+            "rt_ayah": ayah.get("rt"), "rw_ayah": ayah.get("rw"),
+            "tempat_lahir_ibu": ibu.get("tempat_lahir"), "tanggal_lahir_ibu": ibu.get("tanggal_lahir"),
+            "pekerjaan_ibu": ibu.get("pekerjaan"), "alamat_ibu": ibu.get("alamat"),
+            "rt_ibu": ibu.get("rt"), "rw_ibu": ibu.get("rw"),
+        }
+    if jenis == "na":
+        calon, ayah = extra.get("calon") or {}, extra.get("ayah") or {}
+        ibu, csi = extra.get("ibu") or {}, extra.get("csi") or {}
+        return {
+            "jk_calon": calon.get("jk"), "tempat_lahir_calon": calon.get("tempat_lahir"),
+            "tanggal_lahir_calon": calon.get("tanggal_lahir"), "kewarganegaraan": calon.get("kewarganegaraan"),
+            "agama_calon": calon.get("agama"), "pekerjaan_calon": calon.get("pekerjaan"),
+            "alamat_calon": calon.get("alamat"), "rt_calon": calon.get("rt"), "rw_calon": calon.get("rw"),
+            "tempat_lahir_ayah": ayah.get("tempat_lahir"), "tanggal_lahir_ayah": ayah.get("tanggal_lahir"),
+            "pekerjaan_ayah": ayah.get("pekerjaan"), "alamat_ayah": ayah.get("alamat"),
+            "rt_ayah": ayah.get("rt"), "rw_ayah": ayah.get("rw"), "kel_desa_ayah": ayah.get("kel_desa"),
+            "kec_ayah": ayah.get("kec"), "kab_kota_ayah": ayah.get("kab_kota"),
+            "tempat_lahir_ibu": ibu.get("tempat_lahir"), "tanggal_lahir_ibu": ibu.get("tanggal_lahir"),
+            "pekerjaan_ibu": ibu.get("pekerjaan"), "alamat_ibu": ibu.get("alamat"),
+            "rt_ibu": ibu.get("rt"), "rw_ibu": ibu.get("rw"), "kel_desa_ibu": ibu.get("kel_desa"),
+            "kec_ibu": ibu.get("kec"), "kab_kota_ibu": ibu.get("kab_kota"),
+            "bin_binti_pasangan": csi.get("bin_binti"), "jk_pasangan": csi.get("jk"),
+            "ttl_pasangan": csi.get("ttl"), "agama_pasangan": csi.get("agama"),
+            "pekerjaan_pasangan": csi.get("pekerjaan"), "alamat_pasangan": csi.get("alamat"),
+            "rt_pasangan": csi.get("rt"), "rw_pasangan": csi.get("rw"),
+            "kel_desa_pasangan": csi.get("kel_desa"), "kec_pasangan": csi.get("kec"),
+            "kab_kota_pasangan": csi.get("kab_kota"), "provinsi_pasangan": csi.get("provinsi"),
+            "shdk": csi.get("shdk"),
+        }
+    if jenis == "kk":
+        return {"nama_kk": extra.get("nama_kk"), "dusun": extra.get("dusun")}
+    return {}
+
+
 # Internal bookkeeping columns not useful in an exported spreadsheet.
 _EXPORT_SKIP_COLUMNS = {"id", "created_at", "updated_at", "deleted_at"}
 
