@@ -157,6 +157,14 @@ async def _setup_pending_submission(session):
         "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1990-01-01",
         "pekerjaan": "Petani", "status_kawin": "Kawin",
     }
+    # domisili's REQUIRED_EXTRA_FIELDS_BY_JENIS block (2026-08-08, Fase 1 of
+    # ALUR_REVIEW_INPUT_MASTER.md) -- also needed for the tests in this file
+    # that approve() all the way to issuance.
+    submission.staff_extra_data = {
+        "alamat_asal": "Kp. Lama", "rt_asal": "001", "rw_asal": "002",
+        "kel_desa_asal": "Kopo", "kec_asal": "Kec. Uji", "kab_kota_asal": "Kab. Uji",
+        "provinsi_asal": "Jawa Barat", "masa_berlaku_bulan": "6",
+    }
     await session.flush()
     return svc, submission, {"warga": warga, "staff": staff, "admin": admin}
 
@@ -382,3 +390,53 @@ async def test_get_master_data_schema_na_calon_anchor_falls_back_to_applicant(se
     assert schema["jenis"] == "na"
     assert schema["anchors"]["calon"]["nama"] == submission.applicant_nama
     assert schema["anchors"]["calon"]["nik"] == submission.applicant_nik
+
+
+@pytest.mark.asyncio
+async def test_get_missing_staff_fields_includes_extra_data(seeded_session):
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "mati", "name": "Ket. Kematian", "icon": "sentiment_very_dissatisfied",
+        "color_bg": "#EEF1EE", "color_fg": "#5a6b62",
+        "numbering_prefix": "472", "numbering_pattern": "{prefix}/{seq}/Pem",
+        "pdf_body_template": "<p></p>",
+    })
+    user = await _make_warga_user(seeded_session, "warga_missing")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(user, template.id, {}, "3516000000000997", "Warga Missing")
+
+    missing = await svc.get_missing_staff_fields(submission)
+    assert "Jenis Kelamin (Data Master)" in missing
+    assert "Alamat (Data Master)" in missing
+
+    submission.staff_extra_data = {
+        "jk": "Laki-laki", "pekerjaan": "Petani", "alamat": "Kp. X", "rt": "001", "rw": "002",
+    }
+    await seeded_session.flush()
+    still_missing = await svc.get_missing_staff_fields(submission)
+    assert "Jenis Kelamin (Data Master)" not in still_missing
+
+
+@pytest.mark.asyncio
+async def test_get_missing_staff_fields_kk_requires_one_complete_anggota(seeded_session):
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "kk", "name": "Kartu Keluarga", "icon": "family_restroom",
+        "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "474", "numbering_pattern": "{prefix}/{seq}/Pem",
+        "pdf_body_template": "<p></p>",
+    })
+    user = await _make_warga_user(seeded_session, "warga_kk_missing")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(user, template.id, {}, "3516000000000996", "Warga KK")
+
+    missing = await svc.get_missing_staff_fields(submission)
+    assert "Data Anggota Keluarga (minimal 1 anggota)" in missing
+
+    submission.staff_extra_data = {
+        "nama_kk": "Budi", "dusun": "Dusun 1",
+        "anggota": [{"nik": "3516000000000995", "nama": "Budi", "jk": "Laki-laki"}],
+    }
+    await seeded_session.flush()
+    still_missing = await svc.get_missing_staff_fields(submission)
+    assert "Data Anggota Keluarga (minimal 1 anggota)" not in still_missing

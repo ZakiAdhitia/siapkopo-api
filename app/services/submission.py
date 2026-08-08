@@ -25,10 +25,13 @@ from app.repositories.base import BaseRepository
 from app.schemas.staff_extra_data import STAFF_EXTRA_DATA_SCHEMA_BY_JENIS
 from app.services.audit_log import AuditLogService
 from app.services.domain_master import (
+    EXTRA_FIELD_LABELS,
+    REQUIRED_EXTRA_FIELDS_BY_JENIS,
     REQUIRED_STAFF_FIELDS_BY_JENIS,
     STAFF_SESI_SCHEMA_BY_JENIS,
     TEMPLATE_CODE_TO_JENIS,
     _flatten_extra_data,
+    _get_nested,
 )
 from app.services.file_storage import FileStorageService
 from app.services.letter_template import _HIDDEN_TEMPLATE_CODES
@@ -1046,19 +1049,21 @@ class SubmissionService:
 
     async def get_missing_staff_fields(self, submission: Submission) -> list[str]:
         """Labels of data staff still needs to fill in before Approve:
-        is_staff_only TemplateFields blank in `answers` ("Data Formulir")
-        plus, for letter types that need it, whichever
-        REQUIRED_STAFF_FIELDS_BY_JENIS keys are still blank in
-        `staff_master_data` ("Data Master", filled via PUT .../master-data
-        from the citizen's KTP/KK photo attachments -- 2026-08-06, replaces
-        the old Resident-identity-column check).
+        is_staff_only TemplateFields blank in `answers` ("Data Formulir"),
+        REQUIRED_STAFF_FIELDS_BY_JENIS keys still blank in
+        `staff_master_data` ("Data Master" -- generic identity block, PUT
+        .../master-data), and (2026-08-08, Fase 1 of
+        ALUR_REVIEW_INPUT_MASTER.md) REQUIRED_EXTRA_FIELDS_BY_JENIS paths
+        still blank in `staff_extra_data` ("Data Master" -- letter-specific
+        sesi, PUT .../extra-data), plus KK's own "at least one complete
+        anggota row" rule.
 
         is_staff_only fields are intentionally is_required=False so a
         CITIZEN's own submission never gets rejected for a field only staff
-        can supply. But by the time staff hits Approve, both this and the
-        master-data block should be complete -- otherwise the issued PDF
-        and domain-master row ship with blank placeholders. Used both to
-        hard-block approve() and to warn on the detail page before the click.
+        can supply. But by the time staff hits Approve, all three blocks
+        should be complete -- otherwise the issued PDF and domain-master row
+        ship with blank placeholders. Used both to hard-block approve() and
+        to warn on the detail page before the click.
         """
         fields = await self._list_template_fields(submission.template_id)
         answers = submission.answers or {}
@@ -1073,6 +1078,19 @@ class SubmissionService:
                 for key in REQUIRED_STAFF_FIELDS_BY_JENIS.get(jenis, [])
                 if not draft.get(key)
             ]
+            extra = submission.staff_extra_data or {}
+            missing += [
+                EXTRA_FIELD_LABELS[path]
+                for path in REQUIRED_EXTRA_FIELDS_BY_JENIS.get(jenis, [])
+                if not _get_nested(extra, path)
+            ]
+            if jenis == "kk":
+                anggota = extra.get("anggota") or []
+                has_complete_row = any(
+                    m.get("nik") and m.get("nama") and m.get("jk") for m in anggota
+                )
+                if not has_complete_row:
+                    missing.append("Data Anggota Keluarga (minimal 1 anggota)")
         return missing
 
     async def _check_staff_only_fields_filled(self, submission: Submission) -> None:

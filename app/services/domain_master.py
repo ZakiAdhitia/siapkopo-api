@@ -154,6 +154,84 @@ REQUIRED_STAFF_FIELDS_BY_JENIS: dict[str, list[str]] = {
     "ubah_data": ["alamat", "no_kk"],
 }
 
+# Dotted-path required fields within Submission.staff_extra_data, blocking
+# for Approve just like REQUIRED_STAFF_FIELDS_BY_JENIS does for
+# staff_master_data (SubmissionService.get_missing_staff_fields). KK is
+# absent here -- its "at least one complete anggota row" rule doesn't fit a
+# flat required-path list, so it's checked separately.
+REQUIRED_EXTRA_FIELDS_BY_JENIS: dict[str, list[str]] = {
+    "domisili": [
+        "alamat_asal", "rt_asal", "rw_asal", "kel_desa_asal",
+        "kec_asal", "kab_kota_asal", "provinsi_asal", "masa_berlaku_bulan",
+    ],
+    "kematian": ["jk", "pekerjaan", "alamat", "rt", "rw"],
+    "kelahiran": [
+        "anak.jk", "anak.tempat_lahir", "anak.tanggal_lahir", "anak.jam_lahir", "anak.anak_ke",
+        "ayah.tempat_lahir", "ayah.tanggal_lahir", "ayah.pekerjaan", "ayah.alamat", "ayah.rt", "ayah.rw",
+        "ibu.tempat_lahir", "ibu.tanggal_lahir", "ibu.pekerjaan", "ibu.alamat", "ibu.rt", "ibu.rw",
+    ],
+    "na": [
+        "calon.jk", "calon.tempat_lahir", "calon.tanggal_lahir", "calon.kewarganegaraan",
+        "calon.agama", "calon.pekerjaan", "calon.alamat", "calon.rt", "calon.rw",
+        "ayah.tempat_lahir", "ayah.tanggal_lahir", "ayah.pekerjaan", "ayah.alamat",
+        "ayah.rt", "ayah.rw", "ayah.kel_desa", "ayah.kec", "ayah.kab_kota",
+        "ibu.tempat_lahir", "ibu.tanggal_lahir", "ibu.pekerjaan", "ibu.alamat",
+        "ibu.rt", "ibu.rw", "ibu.kel_desa", "ibu.kec", "ibu.kab_kota",
+        "csi.bin_binti", "csi.jk", "csi.ttl", "csi.agama", "csi.pekerjaan", "csi.alamat",
+        "csi.rt", "csi.rw", "csi.kel_desa", "csi.kec", "csi.kab_kota", "csi.provinsi", "csi.shdk",
+    ],
+    "kk": ["nama_kk", "dusun"],
+}
+
+EXTRA_FIELD_LABELS: dict[str, str] = {
+    "alamat_asal": "Alamat Asal (Data Master)", "rt_asal": "RT Asal (Data Master)",
+    "rw_asal": "RW Asal (Data Master)", "kel_desa_asal": "Desa/Kelurahan Asal (Data Master)",
+    "kec_asal": "Kecamatan Asal (Data Master)", "kab_kota_asal": "Kabupaten/Kota Asal (Data Master)",
+    "provinsi_asal": "Provinsi Asal (Data Master)", "masa_berlaku_bulan": "Masa Berlaku (Data Master)",
+    "jk": "Jenis Kelamin (Data Master)", "pekerjaan": "Pekerjaan (Data Master)",
+    "alamat": "Alamat (Data Master)", "rt": "RT (Data Master)", "rw": "RW (Data Master)",
+    "anak.jk": "Jenis Kelamin Anak (Data Master)", "anak.tempat_lahir": "Tempat Lahir Anak (Data Master)",
+    "anak.tanggal_lahir": "Tanggal Lahir Anak (Data Master)", "anak.jam_lahir": "Jam Lahir Anak (Data Master)",
+    "anak.anak_ke": "Anak Ke- (Data Master)",
+    "ayah.tempat_lahir": "Tempat Lahir Ayah (Data Master)", "ayah.tanggal_lahir": "Tanggal Lahir Ayah (Data Master)",
+    "ayah.pekerjaan": "Pekerjaan Ayah (Data Master)", "ayah.alamat": "Alamat Ayah (Data Master)",
+    "ayah.rt": "RT Ayah (Data Master)", "ayah.rw": "RW Ayah (Data Master)",
+    "ayah.kel_desa": "Desa/Kel Ayah (Data Master)", "ayah.kec": "Kecamatan Ayah (Data Master)",
+    "ayah.kab_kota": "Kabupaten/Kota Ayah (Data Master)",
+    "ibu.tempat_lahir": "Tempat Lahir Ibu (Data Master)", "ibu.tanggal_lahir": "Tanggal Lahir Ibu (Data Master)",
+    "ibu.pekerjaan": "Pekerjaan Ibu (Data Master)", "ibu.alamat": "Alamat Ibu (Data Master)",
+    "ibu.rt": "RT Ibu (Data Master)", "ibu.rw": "RW Ibu (Data Master)",
+    "ibu.kel_desa": "Desa/Kel Ibu (Data Master)", "ibu.kec": "Kecamatan Ibu (Data Master)",
+    "ibu.kab_kota": "Kabupaten/Kota Ibu (Data Master)",
+    "calon.jk": "Jenis Kelamin Calon (Data Master)", "calon.tempat_lahir": "Tempat Lahir Calon (Data Master)",
+    "calon.tanggal_lahir": "Tanggal Lahir Calon (Data Master)",
+    "calon.kewarganegaraan": "Kewarganegaraan Calon (Data Master)",
+    "calon.agama": "Agama Calon (Data Master)", "calon.pekerjaan": "Pekerjaan Calon (Data Master)",
+    "calon.alamat": "Alamat Calon (Data Master)", "calon.rt": "RT Calon (Data Master)",
+    "calon.rw": "RW Calon (Data Master)",
+    "csi.bin_binti": "Bin/Binti Calon Pasangan (Data Master)",
+    "csi.jk": "Jenis Kelamin Calon Pasangan (Data Master)",
+    "csi.ttl": "TTL Calon Pasangan (Data Master)", "csi.agama": "Agama Calon Pasangan (Data Master)",
+    "csi.pekerjaan": "Pekerjaan Calon Pasangan (Data Master)", "csi.alamat": "Alamat Calon Pasangan (Data Master)",
+    "csi.rt": "RT Calon Pasangan (Data Master)", "csi.rw": "RW Calon Pasangan (Data Master)",
+    "csi.kel_desa": "Desa/Kel Calon Pasangan (Data Master)", "csi.kec": "Kecamatan Calon Pasangan (Data Master)",
+    "csi.kab_kota": "Kabupaten/Kota Calon Pasangan (Data Master)",
+    "csi.provinsi": "Provinsi Calon Pasangan (Data Master)", "csi.shdk": "SHDK Calon Pasangan (Data Master)",
+    "nama_kk": "Nama Kepala Keluarga (Data Master)", "dusun": "Dusun (Data Master)",
+}
+
+
+def _get_nested(data: dict, dotted_path: str) -> object | None:
+    """Resolve a dotted path ("ayah.tempat_lahir") against a nested dict,
+    returning None if any segment along the way is missing."""
+    value: object = data
+    for part in dotted_path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
 # Static sesi/field metadata per jenis for the Tahap 3 wizard (Fase 2 of
 # ALUR_REVIEW_INPUT_MASTER.md) to render data-driven, plus the
 # GET .../master-data-schema endpoint (SubmissionService.get_master_data_schema).

@@ -77,6 +77,21 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     )
     assert master_data.status_code == 200
 
+    # 2026-08-08 (Fase 1 of ALUR_REVIEW_INPUT_MASTER.md): domisili's
+    # REQUIRED_EXTRA_FIELDS_BY_JENIS block (the letter-specific "alamat
+    # asal" sesi) is now also checked on every approve() call, same as the
+    # master-data block above.
+    extra_data = await client.put(
+        f"/api/v1/submissions/{submission_id}/extra-data",
+        json={
+            "alamat_asal": "Kp. Lama", "rt_asal": "001", "rw_asal": "002",
+            "kel_desa_asal": "Kopo", "kec_asal": "Kec. Uji", "kab_kota_asal": "Kab. Uji",
+            "provinsi_asal": "Jawa Barat", "masa_berlaku_bulan": "6",
+        },
+        headers=sh,
+    )
+    assert extra_data.status_code == 200
+
     approve1 = await client.post(
         f"/api/v1/submissions/{submission_id}/approve", json={"note": "ok"}, headers=sh
     )
