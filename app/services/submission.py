@@ -26,6 +26,7 @@ from app.schemas.staff_extra_data import STAFF_EXTRA_DATA_SCHEMA_BY_JENIS
 from app.services.audit_log import AuditLogService
 from app.services.domain_master import (
     REQUIRED_STAFF_FIELDS_BY_JENIS,
+    STAFF_SESI_SCHEMA_BY_JENIS,
     TEMPLATE_CODE_TO_JENIS,
     _flatten_extra_data,
 )
@@ -998,6 +999,50 @@ class SubmissionService:
         "status_kawin": "Status Kawin (Data Master)",
         "no_kk": "No. KK (Data Master)",
     }
+
+    # sesi_key -> (nama_answer_key, nik_answer_key); None means "read
+    # straight off the submission's own applicant_nama/applicant_nik"
+    # (used when the sesi's subject IS the submission's own applicant, e.g.
+    # NA's "calon" -- the person who submitted the NA request).
+    _ANCHOR_ANSWER_KEYS: dict[str, dict[str, tuple[str | None, str | None]]] = {
+        "kematian": {"almarhum": ("nama_almarhum", "nik_almarhum")},
+        "kelahiran": {
+            "anak": ("nama_anak", None),
+            "ayah": ("nama_ayah", "nik_ayah"),
+            "ibu": ("nama_ibu", "nik_ibu"),
+        },
+        "na": {
+            "calon": (None, None),
+            "ayah": ("nama_ayah", "nik_ayah"),
+            "ibu": ("nama_ibu", "nik_ibu"),
+            "csi": ("nama_pasangan", "nik_pasangan"),
+        },
+    }
+
+    async def get_master_data_schema(self, submission_id: uuid.UUID) -> dict:
+        """Sesi definitions (STAFF_SESI_SCHEMA_BY_JENIS) plus current
+        staff-entered values and citizen-provided anchor identities (nama/
+        NIK per peran, e.g. NA's ayah/ibu/CSI) for a submission's jenis --
+        what Tahap 3's sub-wizard (Fase 2) renders from, data-driven instead
+        of hardcoded per jenis in the frontend.
+        """
+        obj = await self.get_or_404(submission_id)
+        template = await self.template_repo.get(obj.template_id)
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
+        sesi = STAFF_SESI_SCHEMA_BY_JENIS.get(jenis, []) if jenis else []
+        answers = obj.answers or {}
+        anchors: dict[str, dict[str, str | None]] = {}
+        for sesi_key, (nama_key, nik_key) in self._ANCHOR_ANSWER_KEYS.get(jenis, {}).items():
+            anchors[sesi_key] = {
+                "nama": answers.get(nama_key) if nama_key else obj.applicant_nama,
+                "nik": answers.get(nik_key) if nik_key else obj.applicant_nik,
+            }
+        return {
+            "jenis": jenis, "sesi": sesi,
+            "staff_master_data": obj.staff_master_data or {},
+            "staff_extra_data": obj.staff_extra_data or {},
+            "anchors": anchors,
+        }
 
     async def get_missing_staff_fields(self, submission: Submission) -> list[str]:
         """Labels of data staff still needs to fill in before Approve:

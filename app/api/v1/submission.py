@@ -263,6 +263,18 @@ async def update_submission_extra_data(
     return success_response(await _submission_read(session, obj), "Data master tersimpan")
 
 
+@router.get("/submissions/{submission_id}/master-data-schema", response_model=Envelope[dict])
+async def get_submission_master_data_schema(
+    submission_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:edit_master_data")),
+) -> dict:
+    """Sesi definitions (Tahap 3) for this submission's letter type, plus
+    current staff-entered values and citizen-provided anchor identities."""
+    data = await SubmissionService(session).get_master_data_schema(submission_id)
+    return success_response(data)
+
+
 @router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")
 async def download_submission_attachment(
     submission_id: UUID,

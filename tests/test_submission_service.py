@@ -328,3 +328,32 @@ async def test_update_extra_data_rejects_jenis_without_extra_schema(seeded_sessi
 
     with pytest.raises(ValidationAppError):
         await svc.update_extra_data(submission.id, {"anything": "value"})
+
+
+@pytest.mark.asyncio
+async def test_get_master_data_schema_returns_sesi_and_anchors(seeded_session):
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "mati", "name": "Ket. Kematian", "icon": "sentiment_very_dissatisfied",
+        "color_bg": "#EEF1EE", "color_fg": "#5a6b62",
+        "numbering_prefix": "472", "numbering_pattern": "{prefix}/{seq}/Pem",
+        "pdf_body_template": "<p></p>",
+    })
+    await tsvc.add_field(template.id, {
+        "field_key": "nama_almarhum", "label": "Nama Almarhum", "field_type": "text", "is_required": True,
+    })
+    await tsvc.add_field(template.id, {
+        "field_key": "nik_almarhum", "label": "NIK Almarhum", "field_type": "text", "is_required": True,
+    })
+    user = await _make_warga_user(seeded_session, "warga_mati")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(
+        user, template.id, {"nama_almarhum": "Almarhum A", "nik_almarhum": "3516000000000999"},
+        "3516000000000998", "Pelapor",
+    )
+
+    schema = await svc.get_master_data_schema(submission.id)
+    assert schema["jenis"] == "kematian"
+    assert [s["key"] for s in schema["sesi"]] == ["almarhum"]
+    assert schema["anchors"]["almarhum"]["nama"] == "Almarhum A"
+    assert schema["anchors"]["almarhum"]["nik"] == "3516000000000999"
