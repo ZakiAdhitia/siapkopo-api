@@ -535,3 +535,80 @@ async def test_na_master_row_reads_ayah_ibu_csi_from_extra_data(seeded_session):
     assert row.almt_csi == "Kp. B"
     assert row.provinsi_csi == "Jawa Barat"
     assert row.ayah == "Ayah Calon"  # anchor, still from answers
+
+
+async def _setup_pending_kk_submission(session):
+    tsvc = LetterTemplateService(session)
+    template = await tsvc.create({
+        "code": "kk", "name": "Kartu Keluarga", "icon": "family_restroom",
+        "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "474", "numbering_pattern": "{prefix}/{seq}/Pem",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    })
+    await tsvc.add_field(template.id, {
+        "field_key": "status_perubahan", "label": "Status Perubahan", "field_type": "select",
+        "options": ["Baru Menikah (Pecah KK Mandiri)"], "is_required": True,
+    })
+    roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
+    warga = User(username="warga_kk", full_name="Warga KK", hashed_password="x", role_id=roles["warga"].id)
+    staff = User(username="staff_kk", full_name="Staff KK", hashed_password="x", role_id=roles["staff"].id)
+    session.add_all([warga, staff])
+    await session.flush()
+
+    svc = SubmissionService(session)
+    submission = await svc.create(
+        warga, template.id, {"status_perubahan": "Baru Menikah (Pecah KK Mandiri)"},
+        "3516000000000200", "Kepala Keluarga",
+    )
+    # REQUIRED_STAFF_FIELDS_BY_JENIS["kk"] needs rt_id too -- a real FK, so
+    # a real RT/RW row is required (not just any UUID).
+    from app.models.master import RT, RW
+    rw = RW(number="005")
+    session.add(rw)
+    await session.flush()
+    rt = RT(rw_id=rw.id, number="003")
+    session.add(rt)
+    await session.flush()
+    submission.staff_master_data = {
+        "alamat": "Kp. KK", "no_kk": "3516000000000001", "rt_id": str(rt.id),
+        "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1985-05-05",
+        "status_kawin": "Kawin",
+    }
+    submission.staff_extra_data = {
+        "nama_kk": "Kepala Keluarga", "dusun": "Dusun 2",
+        "anggota": [
+            {"nik": "3516000000000200", "nama": "Kepala Keluarga", "jk": "Laki-laki",
+             "tempat_lahir": "Bogor", "tanggal_lahir": "1985-05-05", "agama": "Islam",
+             "pendidikan": "SMA", "pekerjaan": "Wiraswasta", "status_kawin": "Kawin",
+             "shdk": "Kepala Keluarga", "wni_wna": "WNI"},
+            {"nik": "3516000000000201", "nama": "Istri Kepala Keluarga", "jk": "Perempuan",
+             "tempat_lahir": "Bogor", "tanggal_lahir": "1987-06-06", "agama": "Islam",
+             "pendidikan": "SMA", "pekerjaan": "IRT", "status_kawin": "Kawin",
+             "shdk": "Istri", "wni_wna": "WNI"},
+        ],
+        "nama_ayah": "Ayah Kepala Keluarga", "nama_ibu": "Ibu Kepala Keluarga",
+    }
+    await session.flush()
+    return svc, submission, {"warga": warga, "staff": staff}
+
+
+@pytest.mark.asyncio
+async def test_kk_master_row_populates_anggota_from_extra_data(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.master import MasterKK
+
+    svc, submission, users = await _setup_pending_kk_submission(seeded_session)
+    await _approve_to_issued(svc, submission, users["staff"])
+
+    row = (await seeded_session.scalars(
+        sa_select(MasterKK).where(MasterKK.submission_id == submission.id)
+    )).first()
+    assert row.nama_kk == "Kepala Keluarga"
+    assert row.dusun == "Dusun 2"
+    assert row.nama1 == "Kepala Keluarga"
+    assert row.nik1 == "3516000000000200"
+    assert row.nama2 == "Istri Kepala Keluarga"
+    assert row.shdk2 == "Istri"
+    assert row.namaAyah1 == "Ayah Kepala Keluarga"
+    assert row.namaIbu1 == "Ibu Kepala Keluarga"
+    assert row.nama3 is None

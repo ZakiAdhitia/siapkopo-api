@@ -837,24 +837,33 @@ class SubmissionService:
                 submission_id=submission.id,
             ))
         elif code == "kk":
-            # Real per-member data collection (F1.02/F1.06, up to 10
-            # members) isn't built yet -- KK's citizen form still only asks
-            # status_perubahan (see KK_CATEGORY_DOCS docstring in seed
-            # data). Best-effort:
-            # header fields from the applicant snapshot, applicant as
-            # member #1 (they submitted the request, most often the kepala
-            # keluarga), members 2-10 left null and schema-ready.
+            kk_extra = submission.staff_extra_data or {}
+            anggota = kk_extra.get("anggota") or []
+            member_kwargs: dict[str, Any] = {}
+            for i, member in enumerate(anggota[:10], start=1):
+                member_kwargs[f"nama{i}"] = member.get("nama")
+                member_kwargs[f"nik{i}"] = member.get("nik")
+                member_kwargs[f"jkel{i}"] = member.get("jk")
+                member_kwargs[f"tmpLahir{i}"] = member.get("tempat_lahir")
+                member_kwargs[f"tglLahir{i}"] = self._parse_date(member.get("tanggal_lahir"))
+                member_kwargs[f"agama{i}"] = member.get("agama")
+                member_kwargs[f"pend{i}"] = member.get("pendidikan")
+                member_kwargs[f"pekrj{i}"] = member.get("pekerjaan")
+                member_kwargs[f"status{i}"] = member.get("status_kawin")
+                member_kwargs[f"shdk{i}"] = member.get("shdk")
+                member_kwargs[f"wnia{i}"] = member.get("wni_wna")
+            if anggota:
+                member_kwargs["namaAyah1"] = kk_extra.get("nama_ayah")
+                member_kwargs["namaIbu1"] = kk_extra.get("nama_ibu")
             self.session.add(MasterKK(
                 no_kk=applicant.get("no_kk"),
-                nama_kk=applicant.get("nama"),
+                nama_kk=applicant.get("nama_kk") or applicant.get("nama"),
                 alamat=applicant.get("alamat"),
                 rt=applicant.get("rt"), rw=applicant.get("rw"),
-                nama1=applicant.get("nama"), nik1=applicant.get("nik"),
-                jkel1=applicant.get("jk"), tmpLahir1=applicant.get("tempat_lahir"),
-                tglLahir1=self._parse_date(applicant.get("tanggal_lahir")),
-                status1=applicant.get("status_kawin"),
+                dusun=kk_extra.get("dusun"),
                 tgl_surat=issued_date,
                 submission_id=submission.id,
+                **member_kwargs,
             ))
         elif code == "ubah_data":
             self.session.add(MasterUbahData(
