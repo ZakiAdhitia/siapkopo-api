@@ -26,6 +26,7 @@ from app.services.audit_log import AuditLogService
 from app.services.domain_master import (
     REQUIRED_STAFF_FIELDS_BY_JENIS,
     TEMPLATE_CODE_TO_JENIS,
+    _flatten_extra_data,
 )
 from app.services.file_storage import FileStorageService
 from app.services.letter_template import _HIDDEN_TEMPLATE_CODES
@@ -155,14 +156,14 @@ class SubmissionService:
         """Build the shared {nama, nik, alamat, no_kk, jk, tempat_lahir,
         tanggal_lahir, pekerjaan, status_kawin, rt, rw, rt_id} block every
         PDF template and domain-master row reads (SYARAT-PENGAJUAN-SURAT.md's
-        "Field yang identik di semua surat").
-
-        2026-08-06: nama/nik are fixed on the submission itself at creation
-        time; everything else comes from what staff entered via
-        PUT .../master-data (SubmissionMasterDataUpdateRequest) -- there is
-        no more persistent Resident row to read this from (see
-        SISTEM_PENGOLAHAN_DATA_WARGA.md; replaces the old
-        resolve_applicant_data_for_submission/_applicant_data_from_resident).
+        "Field yang identik di semua surat"), plus (2026-08-08, Fase 1 of
+        ALUR_REVIEW_INPUT_MASTER.md) the flattened letter-specific staff
+        sesi data from `staff_extra_data` for jenis that have it (Domisili's
+        alamat asal, NA's ayah/ibu/CSI, Kematian's almarhum, Kelahiran's
+        ayah/ibu) -- see domain_master._flatten_extra_data. Both blocks are
+        staff-entered via PUT .../master-data and PUT .../extra-data
+        respectively; nama/nik are fixed on the submission itself at
+        creation time.
         """
         draft = submission.staff_master_data or {}
         rt_id = draft.get("rt_id")
@@ -174,7 +175,7 @@ class SubmissionService:
                 rw = await self.session.get(RW, rt.rw_id)
                 if rw is not None:
                     rw_number = rw.number
-        return {
+        snapshot = {
             "nama": submission.applicant_nama, "nik": submission.applicant_nik,
             "alamat": draft.get("alamat") or "-", "no_kk": draft.get("no_kk") or "-",
             "jk": draft.get("jk"), "tempat_lahir": draft.get("tempat_lahir"),
@@ -182,6 +183,11 @@ class SubmissionService:
             "status_kawin": draft.get("status_kawin"), "rt": rt_number, "rw": rw_number,
             "rt_id": rt_id,
         }
+        template = await self.template_repo.get(submission.template_id)
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
+        if jenis:
+            snapshot.update(_flatten_extra_data(jenis, submission.staff_extra_data or {}))
+        return snapshot
 
     async def create(
         self, user: User, template_id: uuid.UUID, answers: dict[str, Any],

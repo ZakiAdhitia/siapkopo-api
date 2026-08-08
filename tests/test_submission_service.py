@@ -259,3 +259,36 @@ async def test_master_uhc_has_keperluan_and_pengantar_rt_columns(seeded_session)
     await seeded_session.flush()
     assert row.keperluan == "Keringanan biaya rumah sakit"
     assert row.tanggal_pengantar_rt == date(2026, 8, 1)
+
+
+@pytest.mark.asyncio
+async def test_build_applicant_snapshot_includes_flattened_extra_data(seeded_session):
+    template = await _make_template_with_fields(seeded_session)  # code="domisili"
+    user = await _make_warga_user(seeded_session, "warga_snapshot")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(
+        user, template.id, {"alamat_tinggal_saat_ini": "Jl. A", "keperluan": "Bank"},
+        "3516000000000777", "Warga Snapshot",
+    )
+    submission.staff_extra_data = {"alamat_asal": "Kp. Lama", "rt_asal": "002", "masa_berlaku_bulan": "3 Bulan"}
+    await seeded_session.flush()
+
+    snapshot = await svc.build_applicant_snapshot(submission)
+    assert snapshot["alamat_asal"] == "Kp. Lama"
+    assert snapshot["rt_asal"] == "002"
+    assert snapshot["masa_berlaku_bulan"] == "3 Bulan"
+    # Existing generic keys still present and unaffected.
+    assert snapshot["nama"] == "Warga Snapshot"
+
+
+@pytest.mark.asyncio
+async def test_build_applicant_snapshot_handles_no_extra_data(seeded_session):
+    template = await _make_template_with_fields(seeded_session)
+    user = await _make_warga_user(seeded_session, "warga_snapshot2")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(
+        user, template.id, {"alamat_tinggal_saat_ini": "Jl. B", "keperluan": "Bank"},
+        "3516000000000778", "Warga Snapshot 2",
+    )
+    snapshot = await svc.build_applicant_snapshot(submission)
+    assert snapshot.get("alamat_asal") is None
