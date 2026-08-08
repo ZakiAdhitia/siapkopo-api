@@ -154,6 +154,124 @@ REQUIRED_STAFF_FIELDS_BY_JENIS: dict[str, list[str]] = {
     "ubah_data": ["alamat", "no_kk"],
 }
 
+# Static sesi/field metadata per jenis for the Tahap 3 wizard (Fase 2 of
+# ALUR_REVIEW_INPUT_MASTER.md) to render data-driven, plus the
+# GET .../master-data-schema endpoint (SubmissionService.get_master_data_schema).
+# "source" tells the reader where a sesi's values live:
+#   "generic"      -> Submission.staff_master_data (existing flat 8-field block)
+#   "extra"        -> Submission.staff_extra_data, flat top-level keys
+#   "extra_nested" -> Submission.staff_extra_data[sesi_key], a nested block
+#   "extra_list"   -> Submission.staff_extra_data[sesi_key], a list of blocks
+#   "mixed"        -> some fields from staff_master_data, some from staff_extra_data
+_GENERIC_IDENTITY_SESI = {
+    "key": "pemohon", "label": "Data Pemohon", "source": "generic",
+    "fields": [
+        {"key": "alamat", "label": "Alamat"}, {"key": "rt_id", "label": "RT/RW"},
+        {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+        {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "pekerjaan", "label": "Pekerjaan"},
+        {"key": "status_kawin", "label": "Status Kawin"}, {"key": "no_kk", "label": "No. KK"},
+    ],
+}
+
+STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
+    "domisili": [
+        {"key": "pemohon", "label": "Data Pemohon", "source": "generic", "fields": [
+            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "pekerjaan", "label": "Pekerjaan"},
+            {"key": "status_kawin", "label": "Status Kawin"},
+        ]},
+        {"key": "alamat_asal", "label": "Alamat Asal", "source": "extra", "fields": [
+            {"key": "alamat_asal", "label": "Alamat Asal"}, {"key": "rt_asal", "label": "RT Asal"},
+            {"key": "rw_asal", "label": "RW Asal"}, {"key": "kel_desa_asal", "label": "Desa/Kelurahan Asal"},
+            {"key": "kec_asal", "label": "Kecamatan Asal"}, {"key": "kab_kota_asal", "label": "Kabupaten/Kota Asal"},
+            {"key": "provinsi_asal", "label": "Provinsi Asal"},
+        ]},
+        {"key": "berlaku", "label": "Berlaku", "source": "extra", "fields": [
+            {"key": "masa_berlaku_bulan", "label": "Masa Berlaku (Bulan)"},
+        ]},
+    ],
+    "kematian": [
+        {"key": "almarhum", "label": "Data Almarhum/Almarhumah", "source": "extra", "fields": [
+            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "usia_tahun", "label": "Usia (Tahun)"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"},
+        ]},
+    ],
+    "kelahiran": [
+        {"key": "anak", "label": "Data Anak", "source": "extra_nested", "fields": [
+            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "jam_lahir", "label": "Jam Lahir"},
+            {"key": "anak_ke", "label": "Anak Ke-"},
+        ]},
+        {"key": "ayah", "label": "Data Ayah", "source": "extra_nested", "fields": [
+            {"key": "tempat_lahir", "label": "Tempat Lahir"}, {"key": "tanggal_lahir", "label": "Tanggal Lahir"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"},
+        ]},
+        {"key": "ibu", "label": "Data Ibu", "source": "extra_nested", "fields": [
+            {"key": "tempat_lahir", "label": "Tempat Lahir"}, {"key": "tanggal_lahir", "label": "Tanggal Lahir"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"},
+        ]},
+    ],
+    "na": [
+        {"key": "calon", "label": "Data Calon", "source": "extra_nested", "fields": [
+            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "kewarganegaraan", "label": "Kewarganegaraan"},
+            {"key": "agama", "label": "Agama"}, {"key": "pekerjaan", "label": "Pekerjaan"},
+            {"key": "alamat", "label": "Alamat"}, {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"},
+        ]},
+        {"key": "ayah", "label": "Data Ayah", "source": "extra_nested", "fields": [
+            {"key": "tempat_lahir", "label": "Tempat Lahir"}, {"key": "tanggal_lahir", "label": "Tanggal Lahir"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"}, {"key": "kel_desa", "label": "Desa/Kel"},
+            {"key": "kec", "label": "Kecamatan"}, {"key": "kab_kota", "label": "Kabupaten/Kota"},
+        ]},
+        {"key": "ibu", "label": "Data Ibu", "source": "extra_nested", "fields": [
+            {"key": "tempat_lahir", "label": "Tempat Lahir"}, {"key": "tanggal_lahir", "label": "Tanggal Lahir"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"}, {"key": "kel_desa", "label": "Desa/Kel"},
+            {"key": "kec", "label": "Kecamatan"}, {"key": "kab_kota", "label": "Kabupaten/Kota"},
+        ]},
+        {"key": "csi", "label": "Data Calon Suami/Istri", "source": "extra_nested", "fields": [
+            {"key": "bin_binti", "label": "Bin/Binti"}, {"key": "jk", "label": "Jenis Kelamin"},
+            {"key": "ttl", "label": "Tempat Tanggal Lahir"}, {"key": "agama", "label": "Agama"},
+            {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt", "label": "RT"}, {"key": "rw", "label": "RW"}, {"key": "kel_desa", "label": "Desa/Kel"},
+            {"key": "kec", "label": "Kecamatan"}, {"key": "kab_kota", "label": "Kabupaten/Kota"},
+            {"key": "provinsi", "label": "Provinsi"}, {"key": "shdk", "label": "Status Hubungan Dalam Keluarga"},
+        ]},
+    ],
+    "kk": [
+        {"key": "kk_header", "label": "Data KK", "source": "mixed", "fields": [
+            {"key": "no_kk", "label": "No. KK"}, {"key": "alamat", "label": "Alamat"},
+            {"key": "rt_id", "label": "RT/RW"}, {"key": "nama_kk", "label": "Nama Kepala Keluarga"},
+            {"key": "dusun", "label": "Dusun"},
+        ]},
+        {"key": "anggota", "label": "Data Anggota Keluarga", "source": "extra_list",
+         "repeatable": True, "max_items": 10, "fields": [
+            {"key": "nik", "label": "NIK"}, {"key": "nama", "label": "Nama"},
+            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
+            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "agama", "label": "Agama"},
+            {"key": "pendidikan", "label": "Pendidikan"}, {"key": "pekerjaan", "label": "Pekerjaan"},
+            {"key": "status_kawin", "label": "Status Perkawinan"}, {"key": "shdk", "label": "SHDK"},
+            {"key": "wni_wna", "label": "Status Kependudukan (WNI/WNA)"},
+        ]},
+        {"key": "orang_tua", "label": "Data Orang Tua", "source": "extra", "fields": [
+            {"key": "nama_ayah", "label": "Nama Ayah"}, {"key": "nama_ibu", "label": "Nama Ibu"},
+        ]},
+    ],
+    "sku": [_GENERIC_IDENTITY_SESI],
+    "uhc": [_GENERIC_IDENTITY_SESI],
+    "pindah": [{"key": "pemohon", "label": "Data Pemohon", "source": "generic", "fields": [
+        {"key": "alamat", "label": "Alamat Asal"}, {"key": "no_kk", "label": "No. KK"},
+    ]}],
+    "ubah_data": [{"key": "pemohon", "label": "Data Pemohon", "source": "generic", "fields": [
+        {"key": "alamat", "label": "Alamat"}, {"key": "no_kk", "label": "No. KK"},
+    ]}],
+}
+
 # Internal bookkeeping columns not useful in an exported spreadsheet.
 _EXPORT_SKIP_COLUMNS = {"id", "created_at", "updated_at", "deleted_at"}
 
