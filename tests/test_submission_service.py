@@ -357,3 +357,28 @@ async def test_get_master_data_schema_returns_sesi_and_anchors(seeded_session):
     assert [s["key"] for s in schema["sesi"]] == ["almarhum"]
     assert schema["anchors"]["almarhum"]["nama"] == "Almarhum A"
     assert schema["anchors"]["almarhum"]["nik"] == "3516000000000999"
+
+
+@pytest.mark.asyncio
+async def test_get_master_data_schema_na_calon_anchor_falls_back_to_applicant(seeded_session):
+    """NA's "calon" sesi has no dedicated nama/nik answer keys -- the
+    _ANCHOR_ANSWER_KEYS entry is (None, None), meaning the anchor should
+    read straight off the submission's own applicant_nama/applicant_nik
+    instead of trying answers.get(None)."""
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "na", "name": "Numpang Nikah", "icon": "favorite",
+        "color_bg": "#FDEDF3", "color_fg": "#B23A6B",
+        "numbering_prefix": "474", "numbering_pattern": "{prefix}/{seq}/Kua",
+        "pdf_body_template": "<p></p>",
+    })
+    user = await _make_warga_user(seeded_session, "warga_na")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(
+        user, template.id, {}, "3516000000000777", "Calon Pengantin",
+    )
+
+    schema = await svc.get_master_data_schema(submission.id)
+    assert schema["jenis"] == "na"
+    assert schema["anchors"]["calon"]["nama"] == submission.applicant_nama
+    assert schema["anchors"]["calon"]["nik"] == submission.applicant_nik
