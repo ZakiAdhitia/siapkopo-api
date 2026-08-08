@@ -27,3 +27,14 @@ def test_sku_has_single_generic_sesi():
     sesi = STAFF_SESI_SCHEMA_BY_JENIS["sku"]
     assert len(sesi) == 1
     assert sesi[0]["source"] == "generic"
+
+
+def test_kk_header_fields_have_correct_effective_source():
+    sesi = STAFF_SESI_SCHEMA_BY_JENIS["kk"]
+    kk_header = next(s for s in sesi if s["key"] == "kk_header")
+    by_key = {f["key"]: f for f in kk_header["fields"]}
+    assert "source" not in by_key["no_kk"]
+    assert "source" not in by_key["alamat"]
+    assert "source" not in by_key["rt_id"]
+    assert by_key["nama_kk"]["source"] == "extra"
+    assert by_key["dusun"]["source"] == "extra"

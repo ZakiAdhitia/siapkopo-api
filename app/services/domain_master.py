@@ -324,8 +324,9 @@ STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
     "kk": [
         {"key": "kk_header", "label": "Data KK", "source": "mixed", "fields": [
             {"key": "no_kk", "label": "No. KK"}, {"key": "alamat", "label": "Alamat"},
-            {"key": "rt_id", "label": "RT/RW"}, {"key": "nama_kk", "label": "Nama Kepala Keluarga"},
-            {"key": "dusun", "label": "Dusun"},
+            {"key": "rt_id", "label": "RT/RW"},
+            {"key": "nama_kk", "label": "Nama Kepala Keluarga", "source": "extra"},
+            {"key": "dusun", "label": "Dusun", "source": "extra"},
         ]},
         {"key": "anggota", "label": "Data Anggota Keluarga", "source": "extra_list",
          "repeatable": True, "max_items": 10, "fields": [
