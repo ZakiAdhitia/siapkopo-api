@@ -3,7 +3,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,6 +67,13 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # domain-master tables (MasterDomisili etc.) now, replacing what used to
     # be auto-derived from a Resident row.
     staff_master_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Letter-specific staff blocks that don't fit the generic 8-field
+    # identity shape above -- Domisili's alamat asal, NA's ayah/ibu/CSI,
+    # Kematian's almarhum, Kelahiran's ayah/ibu, KK's anggota keluarga
+    # table. Shape is jenis-dependent, validated by
+    # app.schemas.staff_extra_data.STAFF_EXTRA_DATA_SCHEMA_BY_JENIS.
+    # Populated via PUT .../extra-data (SubmissionService.update_extra_data).
+    staff_extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     physical_documents_promised: Mapped[bool] = mapped_column(default=False)
     status: Mapped[SubmissionStatus] = mapped_column(
