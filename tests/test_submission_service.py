@@ -612,3 +612,65 @@ async def test_kk_master_row_populates_anggota_from_extra_data(seeded_session):
     assert row.namaAyah1 == "Ayah Kepala Keluarga"
     assert row.namaIbu1 == "Ibu Kepala Keluarga"
     assert row.nama3 is None
+
+
+async def _setup_pending_uhc_submission(session):
+    tsvc = LetterTemplateService(session)
+    template = await tsvc.create({
+        "code": "uhc", "name": "Surat Keterangan Tidak Mampu (SKTM)", "icon": "volunteer_activism",
+        "color_bg": "#EAFBF4", "color_fg": "#108050",
+        "numbering_prefix": "440", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    })
+    for key, label in [("no_kk", "No. KK"), ("tgl_dikeluarkan_kk", "Tgl KK"),
+                        ("tanggal_pengantar_rt", "Tgl Pengantar RT"), ("keperluan", "Keperluan")]:
+        field_type = "date" if key.startswith("tgl") or key.startswith("tanggal") else "text"
+        await tsvc.add_field(template.id, {
+            "field_key": key, "label": label, "field_type": field_type, "is_required": True,
+        })
+    roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
+    warga = User(username="warga_uhc", full_name="Warga UHC", hashed_password="x", role_id=roles["warga"].id)
+    staff = User(username="staff_uhc", full_name="Staff UHC", hashed_password="x", role_id=roles["staff"].id)
+    session.add_all([warga, staff])
+    await session.flush()
+
+    svc = SubmissionService(session)
+    submission = await svc.create(
+        warga, template.id, {
+            "no_kk": "3516000000000300", "tgl_dikeluarkan_kk": "2020-01-01",
+            "tanggal_pengantar_rt": "2026-08-01", "keperluan": "Keringanan biaya rumah sakit",
+        }, "3516000000000301", "Pemohon SKTM",
+    )
+    # REQUIRED_STAFF_FIELDS_BY_JENIS["uhc"] needs rt_id too -- a real FK.
+    from app.models.master import RT, RW
+    rw = RW(number="006")
+    session.add(rw)
+    await session.flush()
+    rt = RT(rw_id=rw.id, number="004")
+    session.add(rt)
+    await session.flush()
+    submission.staff_master_data = {
+        "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1990-01-01",
+        "pekerjaan": "Buruh", "status_kawin": "Kawin", "alamat": "Kp. SKTM",
+        "no_kk": "3516000000000300", "rt_id": str(rt.id),
+    }
+    await session.flush()
+    return svc, submission, {"warga": warga, "staff": staff}
+
+
+@pytest.mark.asyncio
+async def test_uhc_master_row_saves_keperluan_and_pengantar_rt(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.master import MasterUHC
+
+    svc, submission, users = await _setup_pending_uhc_submission(seeded_session)
+    await _approve_to_issued(svc, submission, users["staff"])
+
+    row = (await seeded_session.scalars(
+        sa_select(MasterUHC).where(MasterUHC.submission_id == submission.id)
+    )).first()
+    assert row.keperluan == "Keringanan biaya rumah sakit"
+    assert row.tanggal_pengantar_rt is not None
+    assert row.nama_pasien == "Pemohon SKTM"
+    assert row.nama_kepala_keluarga is None
+    assert row.peruntukan is None
