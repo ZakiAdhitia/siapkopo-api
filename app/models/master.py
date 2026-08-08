@@ -371,6 +371,11 @@ class MasterUHC(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     nik_pemohon: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     no_kk: Mapped[str | None] = mapped_column(String(20), nullable=True)
     tgl_dikeluarkan_kk: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Added Fase 1 (2026-08-08): the citizen form has always asked these two
+    # (see letter_template_data.py's "uhc" fields), but _save_to_domain_master
+    # never had a column to save them into -- silent data loss, fixed here.
+    tanggal_pengantar_rt: Mapped[date | None] = mapped_column(Date, nullable=True)
+    keperluan: Mapped[str | None] = mapped_column(String(255), nullable=True)
     alamat: Mapped[str | None] = mapped_column(Text, nullable=True)
     rt: Mapped[str | None] = mapped_column(String(10), nullable=True)
     rw: Mapped[str | None] = mapped_column(String(10), nullable=True)
@@ -404,7 +409,7 @@ class MasterUHC(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
         "pekerjaan": "Pekerjaan", "nama_kepala_keluarga": "Nama Kepala Keluarga",
         "nik_kepala_keluarga": "NIK Kepala Keluarga", "nama_pemohon": "Nama Pemohon",
         "nik_pemohon": "NIK Pemohon", "no_kk": "Nomor KK",
-        "tgl_dikeluarkan_kk": "Tanggal Dikeluarkan KK", "alamat": "Alamat", "rt": "RT", "rw": "RW",
+        "tgl_dikeluarkan_kk": "Tanggal Dikeluarkan KK", "tanggal_pengantar_rt": "Tanggal Surat Pengantar RT", "keperluan": "Keperluan", "alamat": "Alamat", "rt": "RT", "rw": "RW",
         "terdaftar_dtks": "Terdaftar DTKS", "peruntukan": "Peruntukan", "rujukan": "Rujukan",
         **{f"nama_{i}": f"Nama Anggota Keluarga {i}" for i in range(2, 11)},
         **{f"nik_{i}": f"NIK Anggota Keluarga {i}" for i in range(2, 11)},

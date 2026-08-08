@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from sqlalchemy import select
 
@@ -243,3 +245,17 @@ async def test_download_pdf_rejects_non_owner_without_read_all(seeded_session):
     await svc.approve(submission.id, users["admin"], None)
     with pytest.raises(ForbiddenError):
         await svc.download_pdf(submission.id, users["staff"].id, ["submission:download"])
+
+
+@pytest.mark.asyncio
+async def test_master_uhc_has_keperluan_and_pengantar_rt_columns(seeded_session):
+    from app.models.master import MasterUHC
+    row = MasterUHC(
+        nama_pasien="Test", nik_pasien="3516000000000123",
+        keperluan="Keringanan biaya rumah sakit",
+        tanggal_pengantar_rt=date(2026, 8, 1),
+    )
+    seeded_session.add(row)
+    await seeded_session.flush()
+    assert row.keperluan == "Keringanan biaya rumah sakit"
+    assert row.tanggal_pengantar_rt == date(2026, 8, 1)
