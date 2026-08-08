@@ -96,6 +96,43 @@ async def test_refresh_rotation_revokes_old_token(client):
 
 
 @pytest.mark.asyncio
+async def test_logout_blacklists_access_token(client):
+    """A logged-out access token is rejected on the very next request, even
+    though it hasn't naturally expired yet (TokenBlacklist, replacing the
+    old Redis ``bl:{jti}`` key)."""
+    login = await client.post("/api/v1/auth/login",
+                              json={"identifier": "staf", "password": "staf123"})
+    token = login.json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    still_valid = await client.get("/api/v1/auth/me", headers=headers)
+    assert still_valid.status_code == 200
+
+    logout = await client.post("/api/v1/auth/logout", json={}, headers=headers)
+    assert logout.status_code == 200
+
+    after_logout = await client.get("/api/v1/auth/me", headers=headers)
+    assert after_logout.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_logout_also_revokes_refresh_token(client):
+    login = await client.post("/api/v1/auth/login",
+                              json={"identifier": "staf", "password": "staf123"})
+    token = login.json()["data"]["access_token"]
+    refresh = login.json()["data"]["refresh_token"]
+
+    logout = await client.post(
+        "/api/v1/auth/logout", json={"refresh_token": refresh},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert logout.status_code == 200
+
+    resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_staf_permissions_are_concrete_db_codes(client):
     login = await client.post("/api/v1/auth/login",
                               json={"identifier": "staf", "password": "staf123"})

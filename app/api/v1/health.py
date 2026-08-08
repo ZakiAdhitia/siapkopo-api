@@ -2,7 +2,6 @@
 from fastapi import APIRouter, Response, status
 from sqlalchemy import text
 
-from app.core.redis import get_redis
 from app.core.response import success_response
 from app.db.session import AsyncSessionLocal
 
@@ -17,19 +16,13 @@ async def health() -> dict:
 
 @router.get("/health/ready")
 async def readiness(response: Response) -> dict:
-    """Readiness check: verify Postgres and Redis connectivity."""
-    db_ok = redis_ok = False
+    """Readiness check: verify Postgres connectivity."""
     try:
         async with AsyncSessionLocal() as s:
             await s.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False
-    try:
-        redis_ok = await get_redis().ping()
-    except Exception:
-        redis_ok = False
-    if not (db_ok and redis_ok):
+    if not db_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    return success_response({"database": db_ok, "redis": bool(redis_ok)},
-                            "ready" if db_ok and redis_ok else "degraded")
+    return success_response({"database": db_ok}, "ready" if db_ok else "degraded")

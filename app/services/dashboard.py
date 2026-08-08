@@ -1,11 +1,10 @@
-"""Read-only dashboard aggregation over Submission, Redis-cached (Bagian 10).
+"""Read-only dashboard aggregation over Submission (Bagian 10).
 
 Content is identical for every role with `dashboard:read` access -- only
 menu/endpoint access is permission-gated, not the data itself (spec Bagian
 10). Single-desa: no village_id scoping anywhere (multi-desa was removed).
 """
 import io
-import json
 import socket
 from datetime import datetime, timedelta, timezone
 
@@ -15,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from xhtml2pdf import pisa
 
 from app.core.exceptions import AppException
-from app.core.redis import get_redis
 from app.models.letter_template import LetterTemplate
 from app.models.master import VillageProfile
 from app.models.submission import Submission, SubmissionStatus
@@ -25,27 +23,22 @@ from app.services.template_render._base import (
     format_tanggal_indonesia,
 )
 
-_CACHE_TTL_SECONDS = 45
-
 _STATUS_LABELS = {"pending": "Sedang Diproses", "issued": "Terbit", "rejected": "Ditolak"}
 
 
 class DashboardService:
-    """Aggregation queries over Submission, cached briefly in Redis."""
+    """Aggregation queries over Submission.
+
+    No caching layer -- these are cheap COUNT/GROUP BY queries over a
+    single village's submissions, not worth the staleness tradeoff of a
+    cache at this app's scale.
+    """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self.redis = get_redis()
 
-    async def _cached(self, key: str, compute) -> dict | list:
-        cached = await self.redis.get(key)
-        if cached is not None:
-            return json.loads(cached)
-        result = await compute()
-        await self.redis.set(key, json.dumps(result), ex=_CACHE_TTL_SECONDS)
-        return result
-
-    async def _compute_stats(self) -> dict:
+    async def stats(self) -> dict:
+        """Total submission counts by status."""
         rows = await self.session.execute(
             select(Submission.status, func.count()).group_by(Submission.status)
         )
@@ -54,11 +47,8 @@ class DashboardService:
             counts[status.value] = count
         return {"total": sum(counts.values()), **counts}
 
-    async def stats(self) -> dict:
-        """Total submission counts by status."""
-        return await self._cached("dashboard:stats", self._compute_stats)
-
-    async def _compute_trend(self, days: int) -> list[dict]:
+    async def trend(self, days: int = 30) -> list[dict]:
+        """Daily submission counts for the last `days` days."""
         since = datetime.now(timezone.utc) - timedelta(days=days - 1)
         rows = await self.session.execute(
             select(func.date(Submission.created_at), func.count())
@@ -74,11 +64,8 @@ class DashboardService:
             for offset in range(days - 1, -1, -1)
         ]
 
-    async def trend(self, days: int = 30) -> list[dict]:
-        """Daily submission counts for the last `days` days."""
-        return await self._cached(f"dashboard:trend:{days}", lambda: self._compute_trend(days))
-
-    async def _compute_per_jenis(self) -> list[dict]:
+    async def per_jenis(self) -> list[dict]:
+        """Submission counts grouped by letter template (jenis surat)."""
         rows = await self.session.execute(
             select(LetterTemplate.name, func.count(Submission.id))
             .join(Submission, Submission.template_id == LetterTemplate.id)
@@ -87,11 +74,8 @@ class DashboardService:
         )
         return [{"template_name": name, "count": count} for name, count in rows.all()]
 
-    async def per_jenis(self) -> list[dict]:
-        """Submission counts grouped by letter template (jenis surat)."""
-        return await self._cached("dashboard:per_jenis", self._compute_per_jenis)
-
-    async def _compute_inbox(self, limit: int) -> list[dict]:
+    async def inbox(self, limit: int = 20) -> list[dict]:
+        """Submissions currently awaiting action, oldest first."""
         rows = await self.session.execute(
             select(Submission)
             .where(Submission.status == SubmissionStatus.PENDING)
@@ -106,10 +90,6 @@ class DashboardService:
             }
             for s in rows.scalars().all()
         ]
-
-    async def inbox(self, limit: int = 20) -> list[dict]:
-        """Submissions currently awaiting action, oldest first."""
-        return await self._cached(f"dashboard:inbox:{limit}", lambda: self._compute_inbox(limit))
 
     async def _report_data(self) -> tuple[dict, list[dict], list[dict]]:
         """Shared data for both export formats -- exactly what the Laporan

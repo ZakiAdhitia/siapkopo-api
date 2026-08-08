@@ -24,7 +24,6 @@ from app.models.submission import (
 from app.repositories.base import BaseRepository
 from app.services.audit_log import AuditLogService
 from app.services.domain_master import (
-    DOMAIN_MASTER_SERVICES,
     REQUIRED_STAFF_FIELDS_BY_JENIS,
     TEMPLATE_CODE_TO_JENIS,
 )

@@ -2,10 +2,10 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.auth import RefreshToken, User
+from app.models.auth import RefreshToken, TokenBlacklist, User
 
 
 class UserRepository:
@@ -79,3 +79,30 @@ class RefreshTokenRepository:
         for token in tokens:
             token.revoked_at = now
         await self.session.flush()
+
+
+class TokenBlacklistRepository:
+    """Data access for TokenBlacklist (revoked access-token jtis)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def add(self, jti: str, expires_at: datetime) -> None:
+        """Blacklist a jti until it naturally expires.
+
+        Opportunistically prunes already-expired rows first -- there is no
+        background worker to do this on a schedule, and logout is the only
+        write path, so piggybacking cleanup here is sufficient at this
+        app's scale.
+        """
+        now = datetime.now(timezone.utc)
+        await self.session.execute(delete(TokenBlacklist).where(TokenBlacklist.expires_at < now))
+        self.session.add(TokenBlacklist(jti=jti, expires_at=expires_at))
+        await self.session.flush()
+
+    async def exists(self, jti: str) -> bool:
+        """Return True if the given jti is currently blacklisted (not yet expired)."""
+        stmt = select(TokenBlacklist).where(
+            TokenBlacklist.jti == jti, TokenBlacklist.expires_at > datetime.now(timezone.utc)
+        )
+        return await self.session.scalar(stmt) is not None

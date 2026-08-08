@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/db_kopo"
-    redis_url: str = "redis://localhost:6379/0"
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

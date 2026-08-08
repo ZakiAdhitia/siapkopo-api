@@ -1,29 +1,25 @@
-import fakeredis
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import app.core.redis as redis_module
 from app.db.base import Base
 from app.db.session import get_db
+from app.dependencies.rate_limit import _reset_counters
 from app.main import create_app
 from app.seed.seed import seed_positions, seed_rbac
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def _fake_redis():
-    """Replace the module-singleton Redis client with an in-memory fake.
-
-    Redis is not running in this environment; forgot-password/reset-password
-    codes and the logout blacklist go through ``app.core.redis.get_redis()``,
-    so swapping the singleton here makes those flows exercisable without a
-    real server.
-    """
-    redis_module._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Rate limiting is in-process, module-level state (no Redis) -- clear
+    it between tests so one test's requests don't count against another's
+    limit (the test client has no real client IP, so every test would
+    otherwise share the same counter key)."""
+    _reset_counters()
     yield
-    redis_module._client = None
 
 
 @pytest_asyncio.fixture

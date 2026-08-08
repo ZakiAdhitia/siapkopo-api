@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.security import hash_password
-from app.models.auth import RefreshToken, Role, User
-from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.models.auth import RefreshToken, Role, TokenBlacklist, User
+from app.repositories.auth import RefreshTokenRepository, TokenBlacklistRepository, UserRepository
 
 
 @pytest.mark.asyncio
@@ -45,3 +45,43 @@ async def test_revoke_all_for_user_revokes_every_active_token(seeded_session):
     )).all()
     assert len(revoked) == 2
     assert all(t.revoked_at is not None for t in revoked)
+
+
+@pytest.mark.asyncio
+async def test_blacklist_exists_false_for_unknown_jti(db_session):
+    repo = TokenBlacklistRepository(db_session)
+    assert await repo.exists("no-such-jti") is False
+
+
+@pytest.mark.asyncio
+async def test_blacklist_add_then_exists(db_session):
+    repo = TokenBlacklistRepository(db_session)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    await repo.add("jti-1", expires_at)
+    assert await repo.exists("jti-1") is True
+
+
+@pytest.mark.asyncio
+async def test_blacklist_exists_false_once_naturally_expired(db_session):
+    """A jti past its own expires_at is treated as not-blacklisted --
+    matches the old Redis key's TTL auto-expiry."""
+    repo = TokenBlacklistRepository(db_session)
+    already_expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await repo.add("jti-expired", already_expired)
+    assert await repo.exists("jti-expired") is False
+
+
+@pytest.mark.asyncio
+async def test_blacklist_add_prunes_expired_rows(db_session):
+    """No background worker prunes this table -- add() opportunistically
+    deletes already-expired rows itself."""
+    repo = TokenBlacklistRepository(db_session)
+    already_expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await repo.add("jti-old", already_expired)
+    await db_session.commit()
+
+    still_valid = datetime.now(timezone.utc) + timedelta(minutes=30)
+    await repo.add("jti-new", still_valid)
+
+    count = await db_session.scalar(select(func.count()).select_from(TokenBlacklist))
+    assert count == 1

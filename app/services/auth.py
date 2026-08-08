@@ -5,16 +5,15 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.exceptions import UnauthorizedError, ValidationAppError
+from app.core.exceptions import UnauthorizedError
 from app.core.logging import get_logger
-from app.core.redis import get_redis
 from app.core.security import (
     create_access_token, create_refresh_token_value, hash_password, hash_token,
     verify_password,
 )
 from app.models.auth import User
 from app.permissions.registry import POSITION_PERMISSIONS, ROLE_PERMISSIONS
-from app.repositories.auth import RefreshTokenRepository, UserRepository
+from app.repositories.auth import RefreshTokenRepository, TokenBlacklistRepository, UserRepository
 from app.services.password_reset import PasswordResetService
 
 logger = get_logger("auth")
@@ -39,9 +38,9 @@ class AuthService:
         self.session = session
         self.users = UserRepository(session)
         self.refresh_tokens = RefreshTokenRepository(session)
-        self.redis = get_redis()
+        self.token_blacklist = TokenBlacklistRepository(session)
         self.settings = get_settings()
-        self.password_reset = PasswordResetService()
+        self.password_reset = PasswordResetService(session)
 
     def permissions_for(self, user: User) -> list[str]:
         """Resolve effective permission codes for a user: Role ∪ Position.
@@ -106,18 +105,18 @@ class AuthService:
         jti = access_payload.get("jti")
         exp = access_payload.get("exp")
         if jti and exp:
-            ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
-            await self.redis.set(f"bl:{jti}", "1", ex=ttl)
+            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+            await self.token_blacklist.add(jti, expires_at)
         if raw_refresh:
             token = await self.refresh_tokens.get_active_by_hash(hash_token(raw_refresh))
             if token:
                 await self.refresh_tokens.revoke(token)
-                await self.session.commit()
+        await self.session.commit()
         logger.info("Logout jti=%s", jti)
 
     async def is_blacklisted(self, jti: str) -> bool:
         """Return True if an access jti has been blacklisted."""
-        return bool(await self.redis.get(f"bl:{jti}"))
+        return await self.token_blacklist.exists(jti)
 
     async def _resolve_by_identifier(self, identifier: str) -> User | None:
         """Match a login/forgot-password identifier against username, NIK,

@@ -1,7 +1,7 @@
 # SIAPKOPO Backend (sipades-kopo-api)
 
 Backend API for **SIAPKOPO** — Sistem Administrasi dan Pengajuan Kopo (Desa Kopo). Built with FastAPI,
-SQLAlchemy (async), PostgreSQL, Redis, and Alembic, following Clean Architecture
+SQLAlchemy (async), PostgreSQL, and Alembic, following Clean Architecture
 (router → service → repository → model) with data-driven RBAC.
 
 This repository currently implements the **Foundation** (infrastructure, authentication —
@@ -31,7 +31,6 @@ now single-village (Desa Kopo) with a `VillageProfile` singleton.
 - Python 3.13+
 - PostgreSQL running locally, with a database named `db_kopo` already created
   (or update `DATABASE_URL` to point at whichever database/user you use)
-- Docker Desktop (used only to run Redis via `docker-compose.yml`)
 
 ## Setup
 
@@ -53,23 +52,9 @@ Key variables in `.env`:
 
 - `DATABASE_URL` — async PostgreSQL DSN, e.g.
   `postgresql+asyncpg://postgres:<password>@localhost:5432/db_kopo`
-- `REDIS_URL` — defaults to `redis://localhost:6379/0`
 - `JWT_SECRET` — change for any non-local environment
 - `CORS_ORIGINS` — comma-separated list; defaults to `http://localhost:5173` (the
   SIAPKOPO frontend dev server)
-
-## Redis
-
-Redis backs the JWT access-token blacklist (used on every authenticated request), so
-it must be running for anything beyond `/health` and login to work end-to-end.
-
-```bash
-docker compose up -d redis
-docker compose ps          # confirm sipades-redis is Up
-```
-
-If Docker Desktop is not running, start it first — `docker compose up` fails with
-a "cannot connect to the Docker daemon" error until the desktop app is up.
 
 ## Migrations
 
@@ -107,7 +92,7 @@ uvicorn app.main:app --reload
 
 - API base path: `http://localhost:8000/api/v1`
 - Liveness: `GET /api/v1/health`
-- Readiness (checks Postgres + Redis): `GET /api/v1/health/ready`
+- Readiness (checks Postgres): `GET /api/v1/health/ready`
 - Interactive docs: `http://localhost:8000/docs`
 
 ## Testing
@@ -116,9 +101,8 @@ uvicorn app.main:app --reload
 pytest
 ```
 
-The test suite runs entirely against an in-memory SQLite database and a fake
-in-process Redis (`fakeredis`) — no local Postgres or Redis instance is required
-to run `pytest`.
+The test suite runs entirely against an in-memory SQLite database — no local
+Postgres instance is required to run `pytest`.
 
 Lint:
 
@@ -250,8 +234,9 @@ Cloudflare R2 (or any object store) needs no call-site changes — it is not wir
 remote store yet, per CLAUDE.md's "Object Storage ready" guidance.
 
 **Notifications:** `notify_status_change()` is currently a stub that only logs the
-event (submission created/approved/rejected/issued). Real dispatch (WhatsApp/email via
-ARQ background workers) is a Phase 8 (Sub-project C) integration point, not built here.
+event (submission created/approved/rejected/issued). Real dispatch (WhatsApp/email) is
+a Phase 8 (Sub-project C) integration point, not built here — sent inline/synchronously
+when it is, per CLAUDE.md's MVP scope (no background job queue in this system).
 
 ## Roadmap: sub-projects B2/C/D
 
@@ -261,7 +246,6 @@ seeded letter types, citizen submissions, a configurable data-driven approval ch
 automatic numbered PDF issuance with visual signature + QR, and public no-auth
 verification.
 
-Next up is **Sub-project C (Fase 8-11)**: Notifikasi (real WhatsApp/email dispatch via
-the ARQ workers the notification stub is designed to plug into), Dashboard, Portal
-Desa, and Pengaduan (public complaint/report intake). These remain intentionally out of
-scope here.
+Next up is **Sub-project C (Fase 8-11)**: Notifikasi (real WhatsApp/email dispatch,
+sent inline from the request path), Dashboard, Portal Desa, and Pengaduan (public
+complaint/report intake). These remain intentionally out of scope here.

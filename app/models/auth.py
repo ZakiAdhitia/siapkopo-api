@@ -63,3 +63,34 @@ class RefreshToken(UUIDMixin, TimestampMixin, Base):
     token_hash: Mapped[str] = mapped_column(String(255), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TokenBlacklist(UUIDMixin, TimestampMixin, Base):
+    """A revoked access-token jti, kept until its natural expiry.
+
+    Populated on logout (``AuthService.logout``) so a stolen/leaked access
+    token can't be reused before its own ``exp`` claim -- JWTs are otherwise
+    stateless and can't be individually revoked. Replaces the old Redis
+    ``bl:{jti}`` key with TTL; ``TokenBlacklistRepository.add`` opportunistically
+    prunes already-expired rows on write since there is no background worker.
+    """
+
+    __tablename__ = "token_blacklist"
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PasswordResetCode(UUIDMixin, TimestampMixin, Base):
+    """A single-use, short-lived password-reset code for one user.
+
+    At most one active row per user -- ``PasswordResetService.request_reset``
+    replaces any existing row for that user. Replaces the old Redis
+    ``pwreset:{user_id}`` key with TTL.
+    """
+
+    __tablename__ = "password_reset_codes"
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(), ForeignKey("users.id"), unique=True, index=True
+    )
+    code: Mapped[str] = mapped_column(String(10))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
