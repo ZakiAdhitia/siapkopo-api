@@ -144,13 +144,13 @@ TEMPLATE_CODE_TO_JENIS: dict[str, str] = {
 # worth a comment.
 REQUIRED_STAFF_FIELDS_BY_JENIS: dict[str, list[str]] = {
     "domisili": ["jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
-    "kelahiran": [],  # subject is the newborn, not the applicant -- 100% citizen answers
-    "kematian": [],  # subject is the deceased -- 100% citizen answers
+    "kelahiran": [],  # subject is the newborn, not the applicant -- generic block not needed (extra-data sesi covers it, see REQUIRED_EXTRA_FIELDS_BY_JENIS)
+    "kematian": [],  # subject is the deceased -- generic block not needed (extra-data sesi covers it, see REQUIRED_EXTRA_FIELDS_BY_JENIS)
     "sku": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
-    "na": [],  # NA's own form already collects jk/ttl/etc. as direct required citizen answers
+    "na": [],  # subject is the calon, not necessarily the same identity fields -- generic block not needed (extra-data sesi covers it, see REQUIRED_EXTRA_FIELDS_BY_JENIS)
     "uhc": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
     "pindah": ["alamat", "no_kk"],
-    "kk": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "status_kawin"],  # not pekerjaan
+    "kk": ["alamat", "rt_id", "no_kk"],  # member #1 now sourced from staff_extra_data anggota, not these generic keys
     "ubah_data": ["alamat", "no_kk"],
 }
 

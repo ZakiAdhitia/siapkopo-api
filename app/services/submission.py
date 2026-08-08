@@ -6,6 +6,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -341,10 +342,22 @@ class SubmissionService:
         -- filled in inline here (best-effort, not blocking) since a
         walk-in letter issues immediately and has no later detail-page step
         to fill it in at, unlike a normal submission's Approve gate.
+
+        Jenis with a `staff_extra_data` schema (domisili, lahir, mati, na,
+        kk) are blocked here: those fields moved out of citizen `answers`
+        (Task 14) and Mode Loket has no UI yet to collect them, so issuing
+        via walk-in would silently produce a letter with missing data.
+        Wiring `staff_extra_data` input into Mode Loket is a later phase.
         """
         template = await self.template_repo.get(template_id)
         if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower())
+        if STAFF_EXTRA_DATA_SCHEMA_BY_JENIS.get(jenis) is not None:
+            raise ValidationAppError(
+                "Jenis surat ini belum didukung di Mode Loket untuk saat ini, "
+                "gunakan alur pengajuan biasa"
+            )
         fields = await self._list_template_fields(template_id)
         self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
 
@@ -429,7 +442,11 @@ class SubmissionService:
             raise ValidationAppError("Jenis surat ini tidak memiliki data master tambahan")
         merged = dict(obj.staff_extra_data or {})
         merged.update(sesi_updates)
-        validated = schema_cls.model_validate(merged)
+        try:
+            validated = schema_cls.model_validate(merged)
+        except PydanticValidationError as exc:
+            errors = [err["msg"] for err in exc.errors()]
+            raise ValidationAppError("Data master tambahan tidak valid: " + "; ".join(errors)) from exc
         obj.staff_extra_data = validated.model_dump(mode="json")
         await self.session.commit()
         logger.info("Submission extra data updated submission_id=%s", submission_id)
@@ -896,7 +913,7 @@ class SubmissionService:
         render_answers = dict(submission.answers or {})
         berlaku_date: date | None = None
         if template.code == "domisili":
-            berlaku_date = self._compute_berlaku(now.date(), render_answers.get("masa_berlaku_bulan"))
+            berlaku_date = self._compute_berlaku(now.date(), applicant.get("masa_berlaku_bulan"))
             render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
 
         file_service = TemplateFileService()
@@ -963,7 +980,7 @@ class SubmissionService:
             # Anchored to the ORIGINAL issuance date, not "now" -- the
             # letter's validity window shouldn't shift just because staff
             # fixed something days/weeks after it was first issued.
-            berlaku_date = self._compute_berlaku(issued_at.date(), render_answers.get("masa_berlaku_bulan"))
+            berlaku_date = self._compute_berlaku(issued_at.date(), applicant.get("masa_berlaku_bulan"))
             render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
 
         file_service = TemplateFileService()
