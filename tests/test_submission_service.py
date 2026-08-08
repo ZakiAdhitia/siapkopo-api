@@ -674,3 +674,48 @@ async def test_uhc_master_row_saves_keperluan_and_pengantar_rt(seeded_session):
     assert row.nama_pasien == "Pemohon SKTM"
     assert row.nama_kepala_keluarga is None
     assert row.peruntukan is None
+
+
+@pytest.mark.asyncio
+async def test_seed_domisili_no_longer_asks_alamat_asal_or_masa_berlaku(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.letter_template import LetterTemplate, TemplateField
+    from app.seed.seed import seed_letter_templates
+
+    # seeded_session only seeds positions/RBAC, not letter templates --
+    # seed those explicitly here to exercise the real SURAT_TEMPLATES data.
+    await seed_letter_templates(seeded_session)
+
+    template = (await seeded_session.scalars(
+        sa_select(LetterTemplate).where(LetterTemplate.code == "domisili")
+    )).first()
+    fields = (await seeded_session.scalars(
+        sa_select(TemplateField).where(TemplateField.template_id == template.id)
+    )).all()
+    keys = {f.field_key for f in fields}
+    assert "alamat_asal" not in keys
+    assert "masa_berlaku_bulan" not in keys
+    assert "alamat_domisili" in keys  # stays citizen-input
+
+
+@pytest.mark.asyncio
+async def test_seed_mati_no_longer_asks_jk_or_pekerjaan_almarhum(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.letter_template import LetterTemplate, TemplateField
+    from app.seed.seed import seed_letter_templates
+
+    # seeded_session only seeds positions/RBAC, not letter templates --
+    # seed those explicitly here to exercise the real SURAT_TEMPLATES data.
+    await seed_letter_templates(seeded_session)
+
+    template = (await seeded_session.scalars(
+        sa_select(LetterTemplate).where(LetterTemplate.code == "mati")
+    )).first()
+    fields = (await seeded_session.scalars(
+        sa_select(TemplateField).where(TemplateField.template_id == template.id)
+    )).all()
+    keys = {f.field_key for f in fields}
+    assert "jk_almarhum" not in keys
+    assert "pekerjaan_almarhum" not in keys
+    assert "nama_almarhum" in keys  # anchor, stays
+    assert "sebab_meninggal" in keys  # event knowledge, stays

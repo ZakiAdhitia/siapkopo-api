@@ -215,25 +215,17 @@ SURAT_TEMPLATES: list[dict] = [
         "numbering_pattern": "{prefix}/{seq}/Pem",
         "output_category": "desa_direct",
         "is_active": True,
-        # 2026-08-05 TAMBAHAN item 6: every field is now warga-input at
-        # submission time (was: alamat asal/masa berlaku deferred to staff
-        # via is_staff_only, completed later at the detail page) -- the
-        # two-tier "Data Pemohon" (staff) vs "Data Formulir" (warga) split
-        # is retired; staff now only crosschecks what the warga already
-        # filled in before approving.
+        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): alamat asal and
+        # masa berlaku move back to staff sesi input (Submission.
+        # staff_extra_data, DomisiliExtraData) -- staff verifies these from
+        # the citizen's KTP/KK photo, not the citizen's own typing. Alamat
+        # domisili (current residence, in Desa Kopo) stays citizen-input --
+        # that's the citizen's own claim the letter is attesting to.
         "fields": [
-            ("alamat_asal", "Alamat Asal (KTP/KK)", "text", None, "Kampung / Jalan", True, None),
-            ("rt_asal", "RT Asal", "text", None, "mis. 003", True, None),
-            ("rw_asal", "RW Asal", "text", None, "mis. 005", True, None),
-            ("kel_desa_asal", "Desa/Kelurahan Asal", "text", None, "mis. Citeko", True, None),
-            ("kec_asal", "Kecamatan Asal", "text", None, "mis. Cisarua", True, None),
-            ("kab_kota_asal", "Kabupaten/Kota Asal", "text", None, "mis. Bogor", True, None),
-            ("provinsi_asal", "Provinsi Asal", "text", None, "mis. Jawa Barat", True, None),
             ("alamat_domisili", "Alamat Domisili Saat Ini", "text", None, "Kampung / Dusun di Desa Kopo", True, None),
             ("rt_domisili", "RT Domisili", "text", None, "mis. 001", True, None),
             ("rw_domisili", "RW Domisili", "text", None, "mis. 007", True, None),
             ("keperluan", "Keperluan Surat", "text", None, "mis. Identitas Diri / Administrasi Sekolah", True, None),
-            ("masa_berlaku_bulan", "Masa Berlaku (Bulan)", "select", ["1 Bulan", "2 Bulan", "3 Bulan", "6 Bulan"], None, True, None),
         ],
         # Mirrors 2025 DOMISILI/DOMISILI.doc ("KETERANGAN TINGGAL SEMENTARA")
         # field-for-field and paragraph-for-paragraph.
@@ -326,33 +318,17 @@ SURAT_TEMPLATES: list[dict] = [
         "numbering_pattern": "{prefix}/{seq}/Pem",
         "output_category": "dukcapil_pengantar",
         "is_active": True,
-        # 2026-08-05 TAMBAHAN item 6: NIK/TTL/pekerjaan/alamat kedua orang
-        # tua are now warga-input and required, same as the other 6 fields
-        # (was: is_staff_only, completed later by staff from KK/orang tua
-        # photos) -- see the module-level note on "domisili" above.
+        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): JK/TTL/jam lahir/
+        # anak-ke and both parents' TTL/pekerjaan/alamat move to staff sesi
+        # input (Submission.staff_extra_data, KelahiranExtraData) -- staff
+        # verifies these from the KK/orang-tua photos. Only nama_anak and
+        # each parent's nama+NIK (anchors) stay citizen-input.
         "fields": [
             ("nama_anak", "Nama Anak", "text", None, "nama lengkap bayi/anak", True, None),
-            ("gender_anak", "Jenis Kelamin Anak", "select", ["Laki-laki", "Perempuan"], None, True, None),
-            ("tempat_lahir_anak", "Tempat Lahir Anak", "text", None, "mis. Serang / Rumah Sakit", True, None),
-            ("tgl_lahir_anak", "Tanggal Lahir Anak", "date", None, None, True, None),
-            ("jam_lahir_anak", "Jam Lahir", "text", None, "mis. 08:30 WIB", True, None),
-            ("anak_ke", "Anak Ke-", "text", None, "mis. 1 (Pertama)", True, None),
             ("nama_ayah", "Nama Ayah", "text", None, "nama lengkap ayah kandung", True, None),
             ("nik_ayah", "NIK Ayah", "text", None, "16 digit NIK ayah", True, None),
-            ("tempat_lahir_ayah", "Tempat Lahir Ayah", "text", None, "mis. Bogor", True, None),
-            ("tanggal_lahir_ayah", "Tanggal Lahir Ayah", "date", None, None, True, None),
-            ("pekerjaan_ayah", "Pekerjaan Ayah", "text", None, "mis. Wiraswasta", True, None),
-            ("alamat_ayah", "Alamat Ayah", "text", None, "Kampung / Jalan", True, None),
-            ("rt_ayah", "RT Ayah", "text", None, "mis. 003", True, None),
-            ("rw_ayah", "RW Ayah", "text", None, "mis. 012", True, None),
             ("nama_ibu", "Nama Ibu", "text", None, "nama lengkap ibu kandung", True, None),
             ("nik_ibu", "NIK Ibu", "text", None, "16 digit NIK ibu", True, None),
-            ("tempat_lahir_ibu", "Tempat Lahir Ibu", "text", None, "mis. Bogor", True, None),
-            ("tanggal_lahir_ibu", "Tanggal Lahir Ibu", "date", None, None, True, None),
-            ("pekerjaan_ibu", "Pekerjaan Ibu", "text", None, "mis. Mengurus Rumah Tangga", True, None),
-            ("alamat_ibu", "Alamat Ibu", "text", None, "Kampung / Jalan", True, None),
-            ("rt_ibu", "RT Ibu", "text", None, "mis. 003", True, None),
-            ("rw_ibu", "RW Ibu", "text", None, "mis. 012", True, None),
         ],
         # Mirrors 2025 KELAHIRAN/KELAHIRAN.docx ("SURAT KETERANGAN KELAHIRAN").
         "pdf_body_template": (
@@ -401,22 +377,14 @@ SURAT_TEMPLATES: list[dict] = [
         "numbering_pattern": "{prefix}/{seq}/Pem",
         "output_category": "dukcapil_pengantar",
         "is_active": True,
-        # 2026-08-05 TAMBAHAN item 6: NIK and the rest are now warga-input
-        # (was: is_staff_only, completed later by staff from KTP/KK photos)
-        # -- see the module-level note on "domisili" above. TTL/usia_tahun
-        # stay optional (not "staff will fill it in" but a genuine
-        # either/or: exact tanggal lahir OR an approximate usia, whichever
-        # the reporting family member actually knows).
+        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): JK/TTL-or-usia/
+        # pekerjaan/alamat move to staff sesi input (Submission.
+        # staff_extra_data, KematianExtraData) -- staff verifies these from
+        # the almarhum's KTP/KK photo. Only nama+NIK (anchor) and the
+        # event-specific fields (only the reporting family member knows
+        # these) stay citizen-input.
         "fields": [
             ("nama_almarhum", "Nama Almarhum / Almarhumah", "text", None, "nama lengkap almarhum", True, None),
-            ("jk_almarhum", "Jenis Kelamin", "select", ["Laki-laki", "Perempuan"], None, True, None),
-            ("tempat_lahir_almarhum", "Tempat Lahir (jika diketahui)", "text", None, "mis. Bogor", False, None),
-            ("tanggal_lahir_almarhum", "Tanggal Lahir (jika diketahui)", "date", None, None, False, None),
-            ("usia_tahun", "Usia Saat Meninggal (Tahun, jika TTL tidak diketahui)", "number", None, "mis. 64", False, None),
-            ("pekerjaan_almarhum", "Pekerjaan", "text", None, "mis. Buruh Harian Lepas", True, None),
-            ("alamat_almarhum", "Alamat", "text", None, "Kampung / Jalan", True, None),
-            ("rt_almarhum", "RT", "text", None, "mis. 002", True, None),
-            ("rw_almarhum", "RW", "text", None, "mis. 011", True, None),
             ("nik_almarhum", "NIK Almarhum", "text", None, "16 digit NIK", True, None),
             ("tgl_meninggal", "Tanggal Meninggal", "date", None, None, True, None),
             ("jam_meninggal", "Jam Meninggal", "text", None, "mis. 14:15 WIB", True, None),
@@ -474,17 +442,15 @@ SURAT_TEMPLATES: list[dict] = [
             {"code": "na_belum_nikah", "name": "Surat Ket. Belum Pernah Nikah"},
             {"code": "na_n6", "name": "Formulir N.6 (Ket. Kematian Suami/Istri Terdahulu)"},
         ],
+        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): calon/ayah/ibu/
+        # CSI's identity attributes (JK, TTL, kewarganegaraan, agama,
+        # pekerjaan, alamat, RT/RW/kel-desa/kec/kab-kota) move to staff sesi
+        # input (Submission.staff_extra_data, NAExtraData) -- staff
+        # verifies these from KTP/KK photos. Only each peran's nama+NIK
+        # anchors, the subjective marital-status fields, the *_terdahulu
+        # block (N.6, unrelated to this move), and lokasi/tanggal akad stay
+        # citizen-input.
         "fields": [
-            # Status Pernikahan Calon (item 3, 06/08/2026 -- HASIL_UJICOBA_
-            # PENGAJUAN_PER_SURAT.md): right after "Data Pengaju", BEFORE the
-            # calon's own identity block, per the explicit new step order.
-            # Keputusan akhir (06/08/2026, susulan): Cerai Mati membutuhkan
-            # data lengkap pasangan terdahulu (NIK/TTL/pekerjaan/alamat/
-            # tanggal-tempat meninggal) karena dipakai N.6; Cerai Hidup tetap
-            # cukup nama saja (tidak ada N.6 untuknya). Lihat 8 field
-            # `*_pasangan_terdahulu` di bawah, digated ke sebab_cerai=="Cerai
-            # Mati" (bukan status_calon) -- ini membalik keputusan sesi
-            # sebelumnya hari ini yang sempat menghapus semuanya.
             ("status_calon", "Status Pernikahan Calon", "select", ["Jejaka", "Perawan", "Duda", "Janda"], None, True, None),
             ("jumlah_istri", "Jumlah Istri/Suami Sebelumnya", "text", None, "mis. 1",
              True, {"show_when": {"field": "status_calon", "in": ["Duda", "Janda"]}}),
@@ -494,11 +460,6 @@ SURAT_TEMPLATES: list[dict] = [
              True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Hidup"]}}),
             ("pasangan_terdahulu", "Nama Suami/Istri Terdahulu", "text", None, "nama pasangan sebelumnya",
              True, {"show_when": {"field": "status_calon", "in": ["Duda", "Janda"]}}),
-            # Keputusan akhir (06/08/2026, susulan): untuk Cerai Mati, data
-            # pasangan terdahulu TIDAK disederhanakan jadi nama saja --
-            # dikembalikan lengkap karena dibutuhkan untuk menerbitkan N.6
-            # (Ket. Kematian Suami/Istri Terdahulu). Cerai Hidup tetap nama
-            # saja (tidak butuh N.6). Gated ke sebab_cerai, bukan status_calon.
             ("nik_pasangan_terdahulu", "NIK Pasangan Terdahulu", "text", None, "16 digit NIK",
              True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
             ("bin_binti_pasangan_terdahulu", "Bin/Binti Pasangan Terdahulu", "text", None, "mis. Bin Ahmad",
@@ -515,57 +476,12 @@ SURAT_TEMPLATES: list[dict] = [
              True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
             ("tempat_meninggal_pasangan_terdahulu", "Tempat Meninggal Pasangan Terdahulu", "text", None, "mis. RSUD Cibinong",
              True, {"show_when": {"field": "sebab_cerai", "in": ["Cerai Mati"]}}),
-            ("jk_calon", "Jenis Kelamin Calon", "select", ["Laki-laki", "Perempuan"], None, True, None),
-            ("tempat_lahir_calon", "Tempat Lahir Calon", "text", None, "mis. Bogor", True, None),
-            ("tanggal_lahir_calon", "Tanggal Lahir Calon", "date", None, None, True, None),
-            ("kewarganegaraan", "Kewarganegaraan", "select", ["Indonesia", "Asing"], None, True, None),
-            ("agama_calon", "Agama Calon", "text", None, "mis. Islam", True, None),
-            ("pekerjaan_calon", "Pekerjaan Calon", "text", None, "mis. Karyawan Swasta", True, None),
-            ("alamat_calon", "Alamat Calon", "text", None, "Kampung / Jalan", True, None),
-            ("rt_calon", "RT Calon", "text", None, "mis. 003", True, None),
-            ("rw_calon", "RW Calon", "text", None, "mis. 012", True, None),
             ("nama_ayah", "Nama Ayah Kandung", "text", None, "nama ayah", True, None),
             ("nik_ayah", "NIK Ayah Kandung", "text", None, "16 digit NIK ayah", True, None),
-            ("tempat_lahir_ayah", "Tempat Lahir Ayah", "text", None, "mis. Bogor", True, None),
-            ("tanggal_lahir_ayah", "Tanggal Lahir Ayah", "date", None, None, True, None),
-            ("pekerjaan_ayah", "Pekerjaan Ayah", "text", None, "mis. Wiraswasta", True, None),
-            ("alamat_ayah", "Alamat Ayah", "text", None, "Kampung / Jalan", True, None),
-            ("rt_ayah", "RT Ayah", "text", None, "mis. 002", True, None),
-            ("rw_ayah", "RW Ayah", "text", None, "mis. 004", True, None),
-            ("kel_desa_ayah", "Desa/Kel Ayah", "text", None, "mis. Citeko", True, None),
-            ("kec_ayah", "Kecamatan Ayah", "text", None, "mis. Cisarua", True, None),
-            ("kab_kota_ayah", "Kabupaten/Kota Ayah", "text", None, "mis. Bogor", True, None),
             ("nama_ibu", "Nama Ibu Kandung", "text", None, "nama ibu", True, None),
             ("nik_ibu", "NIK Ibu Kandung", "text", None, "16 digit NIK ibu", True, None),
-            ("tempat_lahir_ibu", "Tempat Lahir Ibu", "text", None, "mis. Bogor", True, None),
-            ("tanggal_lahir_ibu", "Tanggal Lahir Ibu", "date", None, None, True, None),
-            ("pekerjaan_ibu", "Pekerjaan Ibu", "text", None, "mis. Mengurus Rumah Tangga", True, None),
-            ("alamat_ibu", "Alamat Ibu", "text", None, "Kampung / Jalan", True, None),
-            ("rt_ibu", "RT Ibu", "text", None, "mis. 002", True, None),
-            ("rw_ibu", "RW Ibu", "text", None, "mis. 004", True, None),
-            ("kel_desa_ibu", "Desa/Kel Ibu", "text", None, "mis. Citeko", True, None),
-            ("kec_ibu", "Kecamatan Ibu", "text", None, "mis. Cisarua", True, None),
-            ("kab_kota_ibu", "Kabupaten/Kota Ibu", "text", None, "mis. Bogor", True, None),
             ("nama_pasangan", "Nama Calon Pasangan", "text", None, "nama calon suami/istri", True, None),
-            ("bin_binti_pasangan", "Bin / Binti Pasangan", "text", None, "mis. Bin Ahmad", True, None),
             ("nik_pasangan", "NIK Calon Pasangan", "text", None, "16 digit NIK pasangan", True, None),
-            ("jk_pasangan", "Jenis Kelamin Pasangan", "select", ["Laki-laki", "Perempuan"], None, True, None),
-            ("ttl_pasangan", "TTL Calon Pasangan", "text", None, "mis. Serang, 15 Mei 1998", True, None),
-            ("agama_pasangan", "Agama Pasangan", "text", None, "mis. Islam", True, None),
-            ("pekerjaan_pasangan", "Pekerjaan Pasangan", "text", None, "mis. Mengurus Rumah Tangga", True, None),
-            ("alamat_pasangan", "Alamat Calon Pasangan", "text", None, "alamat lengkap pasangan", True, None),
-            ("rt_pasangan", "RT Pasangan", "text", None, "mis. 003", True, None),
-            ("rw_pasangan", "RW Pasangan", "text", None, "mis. 002", True, None),
-            ("kel_desa_pasangan", "Desa/Kel Pasangan", "text", None, "mis. Sukasirna", True, None),
-            ("kec_pasangan", "Kecamatan Pasangan", "text", None, "mis. Cibadak", True, None),
-            ("kab_kota_pasangan", "Kabupaten/Kota Pasangan", "text", None, "mis. Sukabumi", True, None),
-            ("provinsi_pasangan", "Provinsi Pasangan", "text", None, "mis. Jawa Barat", True, None),
-            # Lokasi Pernikahan (item 2, 06/08/2026): replaces the old
-            # always-optional desa_akad/kecamatan_akad ("jika menumpang
-            # nikah") with an explicit dalam/luar domisili choice -- luar
-            # domisili makes them required, dalam domisili only needs the
-            # date. Positioned last (after Data Calon Pasangan), matching
-            # the requested step order ("setelah mengisi modal pasangan").
             ("lokasi_akad", "Lokasi Pernikahan", "select",
              ["Di Dalam Domisili Pengaju", "Di Luar Domisili Pengaju"], None, True, None),
             ("desa_akad", "Desa/Kelurahan Tempat Akad", "text", None, "mis. Desa Kopo / Desa Lain", True,

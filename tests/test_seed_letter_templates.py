@@ -15,17 +15,21 @@ async def test_seed_letter_templates_idempotent(db_session):
 
     field_count = await db_session.scalar(select(func.count()).select_from(TemplateField))
     # kk=1 (06/08/2026 susulan: dropped jumlah_anggota_keluarga +
-    # keterangan_perubahan, was 3), domisili=12, usaha=6, lahir=22, mati=14,
-    # na=62 (NA restructure, 06/08/2026: added lokasi_akad (was 61); 8
-    # N.6-detail pasangan_terdahulu fields were briefly dropped then
-    # restored, gated to sebab_cerai=="Cerai Mati" only (Cerai Hidup still
-    # just needs the name) per the final 06/08/2026 decision -- needed to
-    # issue N.6), uhc=23 (SKTM), pindah=36 (F-1.03 restructure, 06/08/2026:
-    # alamat_asal/rt_asal/rw_asal + status_kk_tujuan + 7 numbered
-    # anggota_<n>_{nik,nama,shdk} slots replacing the old single free-text
-    # daftar_anggota_pindah, was 12), ubah_data=4 (added 2026-08-03, F-1.06)
-    # (180)
-    assert field_count == 180
+    # keterangan_perubahan, was 3), domisili=4 (2026-08-08 Fase 1: alamat
+    # asal/rt_asal/rw_asal/kel_desa_asal/kec_asal/kab_kota_asal/
+    # provinsi_asal/masa_berlaku_bulan moved to staff sesi, was 12), usaha=6,
+    # lahir=5 (2026-08-08 Fase 1: JK/TTL/jam-lahir/anak-ke and both parents'
+    # TTL/pekerjaan/alamat moved to staff sesi, was 22), mati=6 (2026-08-08
+    # Fase 1: JK/TTL-or-usia/pekerjaan/alamat moved to staff sesi, was 14),
+    # na=23 (2026-08-08 Fase 1: calon/ayah/ibu/CSI identity attributes (JK,
+    # TTL, kewarganegaraan, agama, pekerjaan, alamat, RT/RW/kel-desa/kec/
+    # kab-kota) moved to staff sesi, was 62), uhc=23 (SKTM), pindah=36
+    # (F-1.03 restructure, 06/08/2026: alamat_asal/rt_asal/rw_asal +
+    # status_kk_tujuan + 7 numbered anggota_<n>_{nik,nama,shdk} slots
+    # replacing the old single free-text daftar_anggota_pindah, was 12),
+    # ubah_data=4 (added 2026-08-03, F-1.06)
+    # (108)
+    assert field_count == 108
 
     kk = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "kk"))
     assert kk.numbering_prefix == "474"
