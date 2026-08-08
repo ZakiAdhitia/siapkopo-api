@@ -440,3 +440,33 @@ async def test_get_missing_staff_fields_kk_requires_one_complete_anggota(seeded_
     await seeded_session.flush()
     still_missing = await svc.get_missing_staff_fields(submission)
     assert "Data Anggota Keluarga (minimal 1 anggota)" not in still_missing
+
+
+async def _approve_to_issued(svc, submission, staff_user):
+    """Advance a PENDING submission through both approval steps."""
+    await svc.approve(submission.id, staff_user, "ok")
+    return await svc.approve(submission.id, staff_user, "signed")
+
+
+@pytest.mark.asyncio
+async def test_domisili_master_row_reads_alamat_asal_from_extra_data(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.master import MasterDomisili
+
+    svc, submission, users = await _setup_pending_submission(seeded_session)
+    submission.staff_extra_data = {
+        "alamat_asal": "Kp. Lama", "rt_asal": "002", "rw_asal": "004",
+        "kel_desa_asal": "Citeko", "kec_asal": "Cisarua", "kab_kota_asal": "Bogor",
+        "provinsi_asal": "Jawa Barat", "masa_berlaku_bulan": "3 Bulan",
+    }
+    await seeded_session.flush()
+
+    await _approve_to_issued(svc, submission, users["staff"])
+
+    row = (await seeded_session.scalars(
+        sa_select(MasterDomisili).where(MasterDomisili.submission_id == submission.id)
+    )).first()
+    assert row.almt_asal == "Kp. Lama"
+    assert row.rt_asal == "002"
+    assert row.provinsi_asal == "Jawa Barat"
+    assert row.berlaku is not None

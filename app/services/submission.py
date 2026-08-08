@@ -653,7 +653,7 @@ class SubmissionService:
         applicant_ttl = self._combine_ttl(applicant.get("tempat_lahir"), applicant.get("tanggal_lahir"))
 
         if code == "domisili":
-            berlaku = berlaku_date or self._compute_berlaku(issued_date, answers.get("masa_berlaku_bulan"))
+            berlaku = berlaku_date or self._compute_berlaku(issued_date, applicant.get("masa_berlaku_bulan"))
             self.session.add(MasterDomisili(
                 tgl_surat=issued_date,
                 nama=applicant.get("nama", "-"),
@@ -662,10 +662,10 @@ class SubmissionService:
                 pkj=applicant.get("pekerjaan"),
                 status=applicant.get("status_kawin"),
                 nik=applicant.get("nik", "-"),
-                almt_asal=answers.get("alamat_asal"),
-                rt_asal=answers.get("rt_asal"), rw_asal=answers.get("rw_asal"),
-                kelurahan_atau_desa_asal=answers.get("kel_desa_asal"), kecamatan_asal=answers.get("kec_asal"),
-                kabupaten_atau_kota_asal=answers.get("kab_kota_asal"), provinsi_asal=answers.get("provinsi_asal"),
+                almt_asal=applicant.get("alamat_asal"),
+                rt_asal=applicant.get("rt_asal"), rw_asal=applicant.get("rw_asal"),
+                kelurahan_atau_desa_asal=applicant.get("kel_desa_asal"), kecamatan_asal=applicant.get("kec_asal"),
+                kabupaten_atau_kota_asal=applicant.get("kab_kota_asal"), provinsi_asal=applicant.get("provinsi_asal"),
                 almt_domisili=answers.get("alamat_domisili"),
                 rt_domisili=answers.get("rt_domisili"), rw_domisili=answers.get("rw_domisili"),
                 persyaratan=self._persyaratan_text(template),
@@ -698,17 +698,17 @@ class SubmissionService:
                 submission_id=submission.id,
             ))
         elif code == "mati":
-            usia = answers.get("usia_tahun")
+            usia = applicant.get("usia_tahun")
             tgl_meninggal = answers.get("tgl_meninggal")
             self.session.add(MasterKematian(
                 tgl_surat=issued_date,
                 nama=answers.get("nama_almarhum", "Almarhum"),
-                jk=answers.get("jk_almarhum"),
+                jk=applicant.get("jk_almarhum"),
                 nik=answers.get("nik_almarhum", "-"),
                 usia=str(usia) if usia not in (None, "") else None,
-                pkj=answers.get("pekerjaan_almarhum"),
-                almt=answers.get("alamat_almarhum"),
-                rt=answers.get("rt_almarhum"), rw=answers.get("rw_almarhum"),
+                pkj=applicant.get("pekerjaan_almarhum"),
+                almt=applicant.get("alamat_almarhum"),
+                rt=applicant.get("rt_almarhum"), rw=applicant.get("rw_almarhum"),
                 hari=self._weekday_indonesia(tgl_meninggal),
                 tgl_meninggal=self._parse_date(tgl_meninggal),
                 jam=answers.get("jam_meninggal"),
