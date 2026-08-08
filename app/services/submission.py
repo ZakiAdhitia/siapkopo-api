@@ -22,6 +22,7 @@ from app.models.submission import (
     SubmissionStatusHistory,
 )
 from app.repositories.base import BaseRepository
+from app.schemas.staff_extra_data import STAFF_EXTRA_DATA_SCHEMA_BY_JENIS
 from app.services.audit_log import AuditLogService
 from app.services.domain_master import (
     REQUIRED_STAFF_FIELDS_BY_JENIS,
@@ -402,6 +403,32 @@ class SubmissionService:
         obj.staff_master_data = data
         await self.session.commit()
         logger.info("Submission master data updated submission_id=%s", submission_id)
+        return obj
+
+    async def update_extra_data(self, submission_id: uuid.UUID, sesi_updates: dict[str, Any]) -> Submission:
+        """Staff fills in the letter-specific master-data sesi (Tahap 3 of
+        ALUR_REVIEW_INPUT_MASTER.md) that doesn't fit the generic identity
+        block -- Domisili's alamat asal, NA's ayah/ibu/CSI, Kematian's
+        almarhum, Kelahiran's ayah/ibu, KK's anggota keluarga table. Partial
+        per-sesi merge: only the top-level keys present in `sesi_updates`
+        are overwritten (each STAFF_SESI_SCHEMA_BY_JENIS sesi maps to one or
+        more top-level keys of the jenis's staff_extra_data schema), so
+        staff can save one sesi at a time without resending the others.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
+            raise ValidationAppError("Data master tidak bisa diedit untuk pengajuan yang ditolak")
+        template = await self.template_repo.get(obj.template_id)
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
+        schema_cls = STAFF_EXTRA_DATA_SCHEMA_BY_JENIS.get(jenis) if jenis else None
+        if schema_cls is None:
+            raise ValidationAppError("Jenis surat ini tidak memiliki data master tambahan")
+        merged = dict(obj.staff_extra_data or {})
+        merged.update(sesi_updates)
+        validated = schema_cls.model_validate(merged)
+        obj.staff_extra_data = validated.model_dump(mode="json")
+        await self.session.commit()
+        logger.info("Submission extra data updated submission_id=%s", submission_id)
         return obj
 
     async def search_guest_submissions(self, nik: str) -> list[Submission]:

@@ -248,6 +248,21 @@ async def update_submission_master_data(
     return success_response(await _submission_read(session, obj), "Data master tersimpan")
 
 
+@router.put("/submissions/{submission_id}/extra-data", response_model=Envelope[SubmissionRead])
+async def update_submission_extra_data(
+    submission_id: UUID,
+    body: dict,
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:edit_master_data")),
+) -> dict:
+    """Staff fills in the letter-specific master-data sesi (Tahap 3) that
+    doesn't fit the generic identity block -- e.g. Domisili's alamat asal,
+    NA's ayah/ibu/CSI blocks, KK's anggota keluarga table. Partial merge:
+    only the sesi keys present in the body are updated."""
+    obj = await SubmissionService(session).update_extra_data(submission_id, body)
+    return success_response(await _submission_read(session, obj), "Data master tersimpan")
+
+
 @router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")
 async def download_submission_attachment(
     submission_id: UUID,

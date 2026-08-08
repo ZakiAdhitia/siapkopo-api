@@ -292,3 +292,39 @@ async def test_build_applicant_snapshot_handles_no_extra_data(seeded_session):
     )
     snapshot = await svc.build_applicant_snapshot(submission)
     assert snapshot.get("alamat_asal") is None
+
+
+@pytest.mark.asyncio
+async def test_update_extra_data_merges_by_sesi(seeded_session):
+    template = await _make_template_with_fields(seeded_session)  # code="domisili"
+    user = await _make_warga_user(seeded_session, "warga_extra")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(
+        user, template.id, {"alamat_tinggal_saat_ini": "Jl. A", "keperluan": "Bank"},
+        "3516000000000888", "Warga Extra",
+    )
+
+    await svc.update_extra_data(submission.id, {"alamat_asal": "Kp. Lama", "rt_asal": "002"})
+    await svc.update_extra_data(submission.id, {"masa_berlaku_bulan": "6 Bulan"})
+
+    got = await svc.get_or_404(submission.id)
+    assert got.staff_extra_data["alamat_asal"] == "Kp. Lama"
+    assert got.staff_extra_data["rt_asal"] == "002"
+    assert got.staff_extra_data["masa_berlaku_bulan"] == "6 Bulan"
+
+
+@pytest.mark.asyncio
+async def test_update_extra_data_rejects_jenis_without_extra_schema(seeded_session):
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "usaha", "name": "Ket. Usaha (SKU)", "icon": "storefront",
+        "color_bg": "#FDEFE7", "color_fg": "#C2582A",
+        "numbering_prefix": "500", "numbering_pattern": "{prefix}/{seq}/Ekonomi",
+        "pdf_body_template": "<p></p>",
+    })
+    user = await _make_warga_user(seeded_session, "warga_sku")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(user, template.id, {}, "3516000000000889", "Warga SKU")
+
+    with pytest.raises(ValidationAppError):
+        await svc.update_extra_data(submission.id, {"anything": "value"})
