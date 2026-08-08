@@ -470,3 +470,68 @@ async def test_domisili_master_row_reads_alamat_asal_from_extra_data(seeded_sess
     assert row.rt_asal == "002"
     assert row.provinsi_asal == "Jawa Barat"
     assert row.berlaku is not None
+
+
+async def _setup_pending_na_submission(session):
+    """Same shape as _setup_pending_submission but code='na', with the
+    citizen-anchor answers (nama_ayah/nik_ayah/nama_ibu/nik_ibu/nama_
+    pasangan/nik_pasangan/status_calon) already filled."""
+    tsvc = LetterTemplateService(session)
+    template = await tsvc.create({
+        "code": "na", "name": "Pengantar Nikah (NA)", "icon": "favorite",
+        "color_bg": "#FFF4EC", "color_fg": "#E06D20",
+        "numbering_prefix": "474.2", "numbering_pattern": "{prefix}/{seq}/Kesra",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    })
+    await tsvc.add_field(template.id, {
+        "field_key": "status_calon", "label": "Status", "field_type": "select",
+        "options": ["Jejaka", "Perawan"], "is_required": True,
+    })
+    roles = {r.name: r for r in (await session.scalars(select(Role))).all()}
+    warga = User(username="warga_na", full_name="Warga NA", hashed_password="x", role_id=roles["warga"].id)
+    staff = User(username="staff_na", full_name="Staff NA", hashed_password="x", role_id=roles["staff"].id)
+    session.add_all([warga, staff])
+    await session.flush()
+
+    svc = SubmissionService(session)
+    submission = await svc.create(
+        warga, template.id, {
+            "status_calon": "Jejaka", "nama_ayah": "Ayah Calon", "nik_ayah": "3516000000000111",
+            "nama_ibu": "Ibu Calon", "nik_ibu": "3516000000000112",
+            "nama_pasangan": "Calon Pasangan", "nik_pasangan": "3516000000000113",
+        }, "3516000000000110", "Calon NA",
+    )
+    submission.staff_extra_data = {
+        "calon": {
+            "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1998-01-01",
+            "kewarganegaraan": "Indonesia", "agama": "Islam", "pekerjaan": "Karyawan",
+            "alamat": "Kp. A", "rt": "001", "rw": "002",
+        },
+        "ayah": {"tempat_lahir": "Bogor", "tanggal_lahir": "1970-01-01", "pekerjaan": "Petani",
+                  "alamat": "Kp. A", "rt": "001", "rw": "002", "kel_desa": "Kopo", "kec": "Cisarua", "kab_kota": "Bogor"},
+        "ibu": {"tempat_lahir": "Bogor", "tanggal_lahir": "1975-01-01", "pekerjaan": "IRT",
+                 "alamat": "Kp. A", "rt": "001", "rw": "002", "kel_desa": "Kopo", "kec": "Cisarua", "kab_kota": "Bogor"},
+        "csi": {"bin_binti": "Binti Ayah", "jk": "Perempuan", "ttl": "Bogor, 1999", "agama": "Islam",
+                 "pekerjaan": "Karyawan", "alamat": "Kp. B", "rt": "003", "rw": "004",
+                 "kel_desa": "Sukasirna", "kec": "Cibadak", "kab_kota": "Sukabumi", "provinsi": "Jawa Barat", "shdk": "-"},
+    }
+    await session.flush()
+    return svc, submission, {"warga": warga, "staff": staff}
+
+
+@pytest.mark.asyncio
+async def test_na_master_row_reads_ayah_ibu_csi_from_extra_data(seeded_session):
+    from sqlalchemy import select as sa_select
+    from app.models.master import MasterNA
+
+    svc, submission, users = await _setup_pending_na_submission(seeded_session)
+    await _approve_to_issued(svc, submission, users["staff"])
+
+    row = (await seeded_session.scalars(
+        sa_select(MasterNA).where(MasterNA.submission_id == submission.id)
+    )).first()
+    assert row.pkj_ayah == "Petani"
+    assert row.kelurahan_atau_desa_ayah == "Kopo"
+    assert row.almt_csi == "Kp. B"
+    assert row.provinsi_csi == "Jawa Barat"
+    assert row.ayah == "Ayah Calon"  # anchor, still from answers
