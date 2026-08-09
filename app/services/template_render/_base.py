@@ -242,7 +242,8 @@ class BaseLetterRenderer:
         body_template: str,
         footer_template: str | None = None,
         kop_template: str | None = None,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         """Interpolate the body template, wrap in the letterhead, and render to PDF.
 
         `footer_template` optionally replaces the default Kepala Desa/Sekdes
@@ -250,6 +251,13 @@ class BaseLetterRenderer:
         optionally replaces the default Pemerintah/Kecamatan/Desa header
         (e.g. KUA_KOP) -- both rendered with the same `data` context, so
         they can reference answer fields like `{{ nama }}`.
+
+        `as_html=True` returns the interpolated HTML string directly,
+        skipping the xhtml2pdf conversion entirely -- used by Tahap 4's
+        live pratinjau (ALUR_REVIEW_INPUT_MASTER.md), which needs the
+        letter's real shape without paying the PDF-render cost. The
+        xhtml2pdf-specific hardening below (link_callback, socket timeout)
+        is irrelevant in this mode since pisa.CreatePDF is never reached.
         """
         # village_name/kecamatan/kabupaten are available to every body
         # template too (not just the letterhead) -- several real templates
@@ -286,6 +294,9 @@ class BaseLetterRenderer:
             footer=footer_html,
             kop=kop_html,
         )
+
+        if as_html:
+            return full_html
 
         buffer = io.BytesIO()
         previous_timeout = socket.getdefaulttimeout()
