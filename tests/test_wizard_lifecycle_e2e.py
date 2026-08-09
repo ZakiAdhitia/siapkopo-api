@@ -356,3 +356,54 @@ async def test_kk_full_lifecycle_via_http(client, db_session):
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
     assert pdf.content[:5] == b"%PDF-"
+
+
+@pytest.mark.asyncio
+async def test_kades_can_view_preview_html_but_not_approve(client, db_session):
+    """Fase 3's final-review fix widened preview-html's permission gate to
+    submission:approve OR submission:read_all so Kepala Desa (admin role,
+    holds read_all but not approve) isn't locked out of this read-only
+    view. That fix was verified by reading the permission registry; this
+    test is the first to actually drive a real kades-authenticated request
+    through the live endpoint."""
+    admin_h = {"Authorization": f"Bearer {await _token(client, 'operator', 'operator123')}"}
+    template = await client.post("/api/v1/templates", json={
+        "code": "usaha", "name": "Ket. Usaha (SKU)", "icon": "storefront",
+        "color_bg": "#FDEFE7", "color_fg": "#C2582A",
+        "numbering_prefix": "475", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama|upper }} - {{ jenis_usaha }}</p>",
+        "required_documents": ["Foto KTP"],
+    }, headers=admin_h)
+    template_id = template.json()["data"]["id"]
+    await client.post(f"/api/v1/templates/{template_id}/fields", json={
+        "field_key": "jenis_usaha", "label": "Jenis Usaha", "field_type": "text", "is_required": True,
+    }, headers=admin_h)
+    rt_id = await _make_rt(client, admin_h)
+
+    warga_h = {"Authorization": f"Bearer {await _token(client, 'warga', 'warga123')}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id,
+        "applicant_nik": "3201019999000906", "applicant_nama": "Warga Uji Kades",
+        "answers": {"jenis_usaha": "Warung Uji"},
+    }, headers=warga_h)
+    submission_id = created.json()["data"]["id"]
+
+    staf_h = {"Authorization": f"Bearer {await _token(client, 'staf', 'staf123')}"}
+    await client.put(f"/api/v1/submissions/{submission_id}/master-data", json={
+        "alamat": "Kp. Uji Kades", "rt_id": rt_id, "jk": "Laki-laki",
+        "tempat_lahir": "Bogor", "tanggal_lahir": "1980-01-01",
+        "pekerjaan": "Wiraswasta", "status_kawin": "Kawin",
+    }, headers=staf_h)
+
+    kades_h = {"Authorization": f"Bearer {await _token(client, 'kades', 'kades123')}"}
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=kades_h)
+    assert preview.status_code == 200, preview.text
+    assert "WARGA UJI KADES" in preview.json()["data"]["html"]
+
+    # Kades genuinely cannot approve (staff/sekdes-only chain, HASIL_UJICOBA_PERROLE.md
+    # kades item 2) -- the permission widening must not have accidentally
+    # granted this too.
+    approve_attempt = await client.post(
+        f"/api/v1/submissions/{submission_id}/approve", json={"note": "x"}, headers=kades_h,
+    )
+    assert approve_attempt.status_code == 403
