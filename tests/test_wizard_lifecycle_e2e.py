@@ -294,3 +294,65 @@ async def test_na_full_lifecycle_via_http(client, db_session):
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
     assert pdf.content[:5] == b"%PDF-"
+
+
+@pytest.mark.asyncio
+async def test_kk_full_lifecycle_via_http(client, db_session):
+    """KK's kk_header sesi is source="mixed" (alamat/rt_id in
+    staff_master_data, nama_kk/dusun routed to staff_extra_data via
+    per-field source overrides) and its anggota sesi is source="extra_list"
+    (an array, not a flat dict or nested single block) -- the two shapes
+    no other jenis in this file exercises."""
+    admin_h = {"Authorization": f"Bearer {await _token(client, 'operator', 'operator123')}"}
+    template = await client.post("/api/v1/templates", json={
+        "code": "kk", "name": "Kartu Keluarga", "icon": "family_restroom",
+        "color_bg": "#EEF1EE", "color_fg": "#5a6b62",
+        "numbering_prefix": "474", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama|upper }} - {{ status_perubahan }}</p>",
+        "required_documents": ["Foto KTP", "Foto KK Lama"],
+    }, headers=admin_h)
+    template_id = template.json()["data"]["id"]
+    await client.post(f"/api/v1/templates/{template_id}/fields", json={
+        "field_key": "status_perubahan", "label": "Status Perubahan", "field_type": "select",
+        "options": ["Baru Menikah (Pecah KK Mandiri)"], "is_required": True,
+    }, headers=admin_h)
+    rt_id = await _make_rt(client, admin_h)
+
+    warga_h = {"Authorization": f"Bearer {await _token(client, 'warga', 'warga123')}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id,
+        "applicant_nik": "3201018888000905", "applicant_nama": "Kepala Keluarga Uji KK",
+        "answers": {"status_perubahan": "Baru Menikah (Pecah KK Mandiri)"},
+    }, headers=warga_h)
+    assert created.status_code == 200, created.text
+    submission_id = created.json()["data"]["id"]
+
+    staf_h = {"Authorization": f"Bearer {await _token(client, 'staf', 'staf123')}"}
+    master = await client.put(f"/api/v1/submissions/{submission_id}/master-data", json={
+        "alamat": "Kp. Uji KK", "rt_id": rt_id, "no_kk": "3201018888000900",
+    }, headers=staf_h)
+    assert master.status_code == 200, master.text
+
+    extra = await client.put(f"/api/v1/submissions/{submission_id}/extra-data", json={
+        "nama_kk": "Kepala Keluarga Uji KK", "dusun": "Dusun Uji",
+        "anggota": [
+            {"nik": "3201018888000905", "nama": "Kepala Keluarga Uji KK", "jk": "Laki-laki",
+             "tempat_lahir": "Bogor", "tanggal_lahir": "1985-05-05", "agama": "Islam",
+             "pendidikan": "SMA", "pekerjaan": "Wiraswasta", "status_kawin": "Kawin",
+             "shdk": "Kepala Keluarga", "wni_wna": "WNI"},
+        ],
+    }, headers=staf_h)
+    assert extra.status_code == 200, extra.text
+
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=staf_h)
+    assert preview.status_code == 200, preview.text
+    _assert_preview_has_real_data(
+        preview.json()["data"]["html"], "KEPALA KELUARGA UJI KK", "Baru Menikah (Pecah KK Mandiri)",
+    )
+
+    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
+    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    assert issued["status"] == "issued"
+
+    pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
+    assert pdf.content[:5] == b"%PDF-"
