@@ -40,7 +40,8 @@ class SKURenderer(BaseLetterRenderer):
         applicant: dict,
         nomor: str,
         tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         return self._render_document(
             profile=profile,
             data={**applicant, **answers},
@@ -48,4 +49,5 @@ class SKURenderer(BaseLetterRenderer):
             tanggal=tanggal,
             letter_title=_LETTER_TITLE,
             body_template=template.pdf_body_template,
+            as_html=as_html,
         )

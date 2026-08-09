@@ -50,7 +50,8 @@ class KKRenderer(BaseLetterRenderer):
         applicant: dict,
         nomor: str,
         tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         return self._render_document(
             profile=profile,
             data={
@@ -63,4 +64,5 @@ class KKRenderer(BaseLetterRenderer):
             letter_title=_LETTER_TITLE,
             body_template=template.pdf_body_template,
             footer_template=DUAL_SIGNATURE_FOOTER,
+            as_html=as_html,
         )

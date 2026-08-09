@@ -313,7 +313,8 @@ class NARenderer(BaseLetterRenderer):
 
     def _render_sub(
         self, *, sub_doc_code: str, profile: VillageProfile, data: dict, nomor: str, tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         title, body, kop, footer = NA_SUB_DOCUMENTS[sub_doc_code]
         extra = _FOOTER_EXTRA.get(sub_doc_code, lambda _d: {})(data)
         return self._render_document(
@@ -325,6 +326,7 @@ class NARenderer(BaseLetterRenderer):
             body_template=body,
             footer_template=footer,
             kop_template=kop,
+            as_html=as_html,
         )
 
     def render_preview(
@@ -348,11 +350,12 @@ class NARenderer(BaseLetterRenderer):
         applicant: dict,
         nomor: str,
         tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         """Render the primary NA document (N.1) as the default issued output."""
         return self._render_sub(
             sub_doc_code="na_n1", profile=profile, data={**applicant, **answers},
-            nomor=f"{nomor}/N.1", tanggal=tanggal,
+            nomor=f"{nomor}/N.1", tanggal=tanggal, as_html=as_html,
         )
 
     def render_sub_document(

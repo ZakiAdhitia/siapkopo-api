@@ -51,7 +51,8 @@ class MatiRenderer(BaseLetterRenderer):
         applicant: dict,
         nomor: str,
         tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         return self._render_document(
             profile=profile,
             data={**applicant, **answers},
@@ -60,4 +61,5 @@ class MatiRenderer(BaseLetterRenderer):
             letter_title=_LETTER_TITLE,
             body_template=template.pdf_body_template,
             kop_template=_KEMATIAN_KOP,
+            as_html=as_html,
         )

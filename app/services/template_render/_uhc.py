@@ -36,7 +36,8 @@ class UHCRenderer(BaseLetterRenderer):
         applicant: dict,
         nomor: str,
         tanggal: str,
-    ) -> bytes:
+        as_html: bool = False,
+    ) -> bytes | str:
         return self._render_document(
             profile=profile,
             data={**applicant, **answers},
@@ -44,4 +45,5 @@ class UHCRenderer(BaseLetterRenderer):
             tanggal=tanggal,
             letter_title=template.name.upper(),
             body_template=template.pdf_body_template,
+            as_html=as_html,
         )
