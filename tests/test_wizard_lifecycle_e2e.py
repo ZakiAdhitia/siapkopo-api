@@ -221,3 +221,76 @@ async def test_kelahiran_full_lifecycle_via_http(client, db_session):
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
     assert pdf.content[:5] == b"%PDF-"
+
+
+@pytest.mark.asyncio
+async def test_na_full_lifecycle_via_http(client, db_session):
+    """NA has 4 nested extra-data sesi (calon/ayah/ibu/csi) and its issued
+    PDF/preview go through NARenderer's sub-document render path
+    (_render_sub -> na_n1), not the plain single-body path every other
+    jenis in this file uses -- the one test here that exercises that
+    branch over real HTTP end-to-end."""
+    admin_h = {"Authorization": f"Bearer {await _token(client, 'operator', 'operator123')}"}
+    template = await client.post("/api/v1/templates", json={
+        "code": "na", "name": "Pengantar Nikah (NA)", "icon": "favorite",
+        "color_bg": "#FFF4EC", "color_fg": "#E06D20",
+        "numbering_prefix": "473", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>unused for na</p>",
+        "required_documents": ["Foto KTP Calon"],
+    }, headers=admin_h)
+    template_id = template.json()["data"]["id"]
+    for field_key, label, field_type, options in [
+        ("status_calon", "Status Pernikahan Calon", "select", ["Jejaka", "Perawan", "Duda", "Janda"]),
+        ("nama_ayah", "Nama Ayah Kandung", "text", None), ("nik_ayah", "NIK Ayah Kandung", "text", None),
+        ("nama_ibu", "Nama Ibu Kandung", "text", None), ("nik_ibu", "NIK Ibu Kandung", "text", None),
+        ("nama_pasangan", "Nama Calon Pasangan", "text", None), ("nik_pasangan", "NIK Calon Pasangan", "text", None),
+        ("lokasi_akad", "Lokasi Pernikahan", "select", ["Di Dalam Domisili Pengaju", "Di Luar Domisili Pengaju"]),
+        ("tgl_akad", "Rencana Tanggal Akad Nikah", "date", None),
+    ]:
+        body = {"field_key": field_key, "label": label, "field_type": field_type, "is_required": True}
+        if options:
+            body["options"] = options
+        await client.post(f"/api/v1/templates/{template_id}/fields", json=body, headers=admin_h)
+
+    warga_h = {"Authorization": f"Bearer {await _token(client, 'warga', 'warga123')}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id,
+        "applicant_nik": "3201017777000904", "applicant_nama": "Calon Uji NA",
+        "answers": {
+            "status_calon": "Jejaka", "nama_ayah": "Ayah Calon Uji", "nik_ayah": "3201017777000801",
+            "nama_ibu": "Ibu Calon Uji", "nik_ibu": "3201017777000802",
+            "nama_pasangan": "Pasangan Uji", "nik_pasangan": "3201017777000803",
+            "lokasi_akad": "Di Dalam Domisili Pengaju", "tgl_akad": "2026-12-12",
+        },
+    }, headers=warga_h)
+    assert created.status_code == 200, created.text
+    submission_id = created.json()["data"]["id"]
+
+    staf_h = {"Authorization": f"Bearer {await _token(client, 'staf', 'staf123')}"}
+    extra = await client.put(f"/api/v1/submissions/{submission_id}/extra-data", json={
+        "calon": {"jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "2000-01-01",
+                  "kewarganegaraan": "Indonesia", "agama": "Islam", "pekerjaan": "Wiraswasta",
+                  "alamat": "Kp. Uji NA", "rt": "001", "rw": "002"},
+        "ayah": {"tempat_lahir": "Bogor", "tanggal_lahir": "1970-01-01", "pekerjaan": "Petani",
+                 "alamat": "Kp. Uji NA", "rt": "001", "rw": "002", "kel_desa": "Kopo",
+                 "kec": "Cisarua", "kab_kota": "Bogor"},
+        "ibu": {"tempat_lahir": "Bogor", "tanggal_lahir": "1972-01-01", "pekerjaan": "Ibu Rumah Tangga",
+                "alamat": "Kp. Uji NA", "rt": "001", "rw": "002", "kel_desa": "Kopo",
+                "kec": "Cisarua", "kab_kota": "Bogor"},
+        "csi": {"bin_binti": "Binti Bapak Pasangan", "jk": "Perempuan", "ttl": "Bogor, 02-02-2000",
+                "agama": "Islam", "pekerjaan": "Wiraswasta", "alamat": "Kp. Uji Pasangan",
+                "rt": "003", "rw": "004", "kel_desa": "Kopo", "kec": "Cisarua", "kab_kota": "Bogor",
+                "provinsi": "Jawa Barat", "shdk": "Kepala Keluarga"},
+    }, headers=staf_h)
+    assert extra.status_code == 200, extra.text
+
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=staf_h)
+    assert preview.status_code == 200, preview.text
+    _assert_preview_has_real_data(preview.json()["data"]["html"], "CALON UJI NA", "FORMULIR PENGANTAR NIKAH")
+
+    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
+    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    assert issued["status"] == "issued"
+
+    pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
+    assert pdf.content[:5] == b"%PDF-"
