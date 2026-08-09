@@ -1068,6 +1068,41 @@ class SubmissionService:
             "anchors": anchors,
         }
 
+    async def get_preview_html(self, submission_id: uuid.UUID) -> str:
+        """Render the letter's current shape (real applicant/answers data,
+        not sample data) as an HTML string for Tahap 4's live pratinjau
+        (ALUR_REVIEW_INPUT_MASTER.md) -- read-only, safe to call any number
+        of times before the submission is actually issued so staff can
+        sanity-check the letter and fix typos (via update_answers) without
+        waiting until it's already terbit.
+
+        Mirrors `_issue()`'s context-building exactly (same
+        build_applicant_snapshot call, same domisili `berlaku` placeholder
+        branch), except `berlaku` is anchored to "now" rather than the
+        eventual issuance moment since the submission isn't issued yet --
+        may drift by a day if staff preview today and approve tomorrow,
+        acceptable for a sanity-check view (CLAUDE.md: only the signed
+        physical copy is ever legally final).
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
+            raise ValidationAppError("Pratinjau tidak tersedia untuk pengajuan yang ditolak")
+        template = await self.template_repo.get(obj.template_id)
+        village = await VillageProfileService(self.session).get()
+        applicant = await self.build_applicant_snapshot(obj)
+
+        now = datetime.now(timezone.utc)
+        tanggal = format_tanggal_indonesia(now)
+        render_answers = dict(obj.answers or {})
+        if template.code == "domisili":
+            berlaku_date = self._compute_berlaku(now.date(), applicant.get("masa_berlaku_bulan"))
+            render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
+
+        return TemplateRenderService().render_issued_html(
+            template=template, profile=village, answers=render_answers,
+            applicant=applicant, nomor="", tanggal=tanggal,
+        )
+
     async def get_missing_staff_fields(self, submission: Submission) -> list[str]:
         """Labels of data staff still needs to fill in before Approve:
         is_staff_only TemplateFields blank in `answers` ("Data Formulir"),

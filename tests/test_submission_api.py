@@ -236,3 +236,75 @@ async def test_upload_attachment_rejects_non_owner(client, db_session, tmp_path,
         headers={"Authorization": f"Bearer {warga2_tok}"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_preview_html_shows_real_data_and_updates_after_edit(client, db_session):
+    template_id = await _setup_village_template_workflow(client, db_session)
+    warga_tok = await _token(client, "warga", "warga123")
+    wh = {"Authorization": f"Bearer {warga_tok}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Pertama"},
+        "applicant_nik": "3516000000000102", "applicant_nama": "Warga Preview",
+    }, headers=wh)
+    submission_id = created.json()["data"]["id"]
+
+    staf_tok = await _token(client, "staf", "staf123")
+    sh = {"Authorization": f"Bearer {staf_tok}"}
+
+    preview1 = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=sh)
+    assert preview1.status_code == 200
+    html1 = preview1.json()["data"]["html"]
+    assert "Warga Preview" in html1
+    assert "Jl. Pertama" in html1
+
+    updated = await client.put(
+        f"/api/v1/submissions/{submission_id}/answers",
+        json={"answers": {"alamat_tinggal_saat_ini": "Jl. Sudah Diedit"}},
+        headers=sh,
+    )
+    assert updated.status_code == 200
+
+    preview2 = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=sh)
+    html2 = preview2.json()["data"]["html"]
+    assert "Jl. Sudah Diedit" in html2
+    assert "Jl. Pertama" not in html2
+
+
+@pytest.mark.asyncio
+async def test_get_preview_html_requires_submission_approve_permission(client, db_session):
+    template_id = await _setup_village_template_workflow(client, db_session)
+    warga_tok = await _token(client, "warga", "warga123")
+    wh = {"Authorization": f"Bearer {warga_tok}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Uji"},
+        "applicant_nik": "3516000000000103", "applicant_nama": "Warga Uji Izin",
+    }, headers=wh)
+    submission_id = created.json()["data"]["id"]
+
+    forbidden = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=wh)
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_preview_html_blocked_after_rejection(client, db_session):
+    template_id = await _setup_village_template_workflow(client, db_session)
+    warga_tok = await _token(client, "warga", "warga123")
+    wh = {"Authorization": f"Bearer {warga_tok}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Ditolak"},
+        "applicant_nik": "3516000000000104", "applicant_nama": "Warga Ditolak",
+    }, headers=wh)
+    submission_id = created.json()["data"]["id"]
+
+    staf_tok = await _token(client, "staf", "staf123")
+    sh = {"Authorization": f"Bearer {staf_tok}"}
+    rejected = await client.post(
+        f"/api/v1/submissions/{submission_id}/reject", json={"reason": "tidak lengkap"}, headers=sh
+    )
+    assert rejected.status_code == 200
+
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=sh)
+    # ValidationAppError maps to 422 in this codebase (app/core/exceptions.py),
+    # not 400 -- matches every other ValidationAppError raise site.
+    assert preview.status_code == 422

@@ -328,3 +328,17 @@ async def download_submission_sub_doc_pdf(
         headers={"Content-Disposition": f'attachment; filename="{sub_doc_code}-{submission_id}.pdf"'},
     )
 
+
+@router.get("/submissions/{submission_id}/preview-html", response_model=Envelope[dict])
+async def get_submission_preview_html(
+    submission_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:approve")),
+) -> dict:
+    """Pratinjau HTML surat dengan data pengajuan yang sesungguhnya (Tahap 4,
+    ALUR_REVIEW_INPUT_MASTER.md) -- bukan PDF final, tidak menyimpan
+    apapun, aman dipanggil berulang kali sebelum surat benar-benar
+    disetujui."""
+    html = await SubmissionService(session).get_preview_html(submission_id)
+    return success_response({"html": html})
+
