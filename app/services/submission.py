@@ -1078,11 +1078,15 @@ class SubmissionService:
 
         Mirrors `_issue()`'s context-building exactly (same
         build_applicant_snapshot call, same domisili `berlaku` placeholder
-        branch), except `berlaku` is anchored to "now" rather than the
-        eventual issuance moment since the submission isn't issued yet --
-        may drift by a day if staff preview today and approve tomorrow,
-        acceptable for a sanity-check view (CLAUDE.md: only the signed
-        physical copy is ever legally final).
+        branch), except for PENDING submissions `berlaku` is anchored to
+        "now" rather than the eventual issuance moment since the submission
+        isn't issued yet -- may drift by a day if staff preview today and
+        approve tomorrow, acceptable for a sanity-check view (CLAUDE.md:
+        only the signed physical copy is ever legally final). For ISSUED
+        submissions it's anchored to the original `issued_at` instead
+        (same reasoning as `regenerate_pdf()`) so the preview matches the
+        already-issued PDF instead of drifting forward every time staff
+        reopen the page.
         """
         obj = await self.get_or_404(submission_id)
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
@@ -1091,7 +1095,7 @@ class SubmissionService:
         village = await VillageProfileService(self.session).get()
         applicant = await self.build_applicant_snapshot(obj)
 
-        now = datetime.now(timezone.utc)
+        now = obj.issued_at or datetime.now(timezone.utc)
         tanggal = format_tanggal_indonesia(now)
         render_answers = dict(obj.answers or {})
         if template.code == "domisili":

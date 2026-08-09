@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
-from app.dependencies.auth import CurrentUser, require_permission
+from app.dependencies.auth import CurrentUser, require_any_permission, require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
 from app.models.auth import User
 from app.schemas.common import Page
@@ -333,12 +333,20 @@ async def download_submission_sub_doc_pdf(
 async def get_submission_preview_html(
     submission_id: UUID,
     session: AsyncSession = Depends(get_db),
-    current: CurrentUser = Depends(require_permission("submission:approve")),
+    current: CurrentUser = Depends(
+        require_any_permission("submission:approve", "submission:read_all")
+    ),
 ) -> dict:
     """Pratinjau HTML surat dengan data pengajuan yang sesungguhnya (Tahap 4,
     ALUR_REVIEW_INPUT_MASTER.md) -- bukan PDF final, tidak menyimpan
     apapun, aman dipanggil berulang kali sebelum surat benar-benar
-    disetujui."""
+    disetujui.
+
+    Gated on submission:approve OR submission:read_all (not approve alone)
+    so Kepala Desa -- view-only by design (submission:approve deliberately
+    withheld, see permissions/registry.py), but still holding
+    submission:read_all/download -- can see this read-only preview of data
+    he's already entitled to see in full.
+    """
     html = await SubmissionService(session).get_preview_html(submission_id)
     return success_response({"html": html})
-

@@ -1,8 +1,11 @@
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.auth import Role, User
+from app.services.template_render import format_tanggal_indonesia
 
 
 async def _token(client, identifier, password):
@@ -308,3 +311,88 @@ async def test_get_preview_html_blocked_after_rejection(client, db_session):
     # ValidationAppError maps to 422 in this codebase (app/core/exceptions.py),
     # not 400 -- matches every other ValidationAppError raise site.
     assert preview.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_preview_html_for_issued_submission_anchors_to_issued_at_not_now(
+    client, db_session, monkeypatch, tmp_path
+):
+    """Once a submission is ISSUED, the preview's date must match the
+    already-issued PDF (anchored to `issued_at`), not drift forward with
+    wall-clock "now" every time staff reopen the page -- same reasoning as
+    `regenerate_pdf()`.
+
+    Proven structurally: after issuance, `datetime.now` inside the service
+    module is monkeypatched to a clearly-different fake moment (year 2099)
+    and the preview is fetched again. If the code still read wall-clock
+    "now" the rendered date would show the fake year; it must instead keep
+    showing the real `issued_at` date from the approve response.
+    """
+    monkeypatch.setattr(
+        "app.services.file_storage.get_settings",
+        lambda: type("S", (), {
+            "upload_storage_dir": str(tmp_path), "max_upload_size_bytes": 1024 * 1024,
+        })(),
+    )
+    template_id = await _setup_village_template_workflow(client, db_session)
+
+    warga_tok = await _token(client, "warga", "warga123")
+    wh = {"Authorization": f"Bearer {warga_tok}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id, "answers": {"alamat_tinggal_saat_ini": "Jl. Terbit"},
+        "applicant_nik": "3516000000000106", "applicant_nama": "Warga Terbit",
+    }, headers=wh)
+    submission_id = created.json()["data"]["id"]
+
+    staf_tok = await _token(client, "staf", "staf123")
+    sh = {"Authorization": f"Bearer {staf_tok}"}
+    await client.put(
+        f"/api/v1/submissions/{submission_id}/master-data",
+        json={
+            "jk": "Perempuan", "tempat_lahir": "Bogor", "tanggal_lahir": "1990-01-01",
+            "pekerjaan": "Wiraswasta", "status_kawin": "Kawin",
+        },
+        headers=sh,
+    )
+    await client.put(
+        f"/api/v1/submissions/{submission_id}/extra-data",
+        json={
+            "alamat_asal": "Kp. Lama", "rt_asal": "001", "rw_asal": "002",
+            "kel_desa_asal": "Kopo", "kec_asal": "Kec. Uji", "kab_kota_asal": "Kab. Uji",
+            "provinsi_asal": "Jawa Barat", "masa_berlaku_bulan": "6",
+        },
+        headers=sh,
+    )
+    approve1 = await client.post(
+        f"/api/v1/submissions/{submission_id}/approve", json={"note": "ok"}, headers=sh
+    )
+    assert approve1.status_code == 200
+
+    sekdes_tok = await _token(client, "sekdes", "sekdes123")
+    kh = {"Authorization": f"Bearer {sekdes_tok}"}
+    approve2 = await client.post(
+        f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=kh
+    )
+    assert approve2.status_code == 200
+    body = approve2.json()["data"]
+    assert body["status"] == "issued"
+    issued_at = datetime.fromisoformat(body["issued_at"])
+    expected_tanggal = format_tanggal_indonesia(issued_at)
+
+    # A fake "now" far in the future -- if get_preview_html still anchored
+    # to wall-clock now() for ISSUED submissions, this is what would show up.
+    fake_now = datetime(2099, 1, 1, tzinfo=timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fake_now
+
+    monkeypatch.setattr("app.services.submission.datetime", _FrozenDatetime)
+
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=sh)
+    assert preview.status_code == 200
+    html = preview.json()["data"]["html"]
+
+    assert expected_tanggal in html
+    assert format_tanggal_indonesia(fake_now) not in html
