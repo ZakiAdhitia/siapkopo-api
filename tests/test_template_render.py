@@ -122,3 +122,83 @@ def test_render_preview_still_works_after_refactor():
     template = _template()
     pdf_bytes = TemplateRenderService().render_preview(template, _fields(template.id), _profile())
     assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_render_issued_html_returns_string_with_real_data():
+    template = _template()
+    profile = _profile()
+    html = TemplateRenderService().render_issued_html(
+        template=template, profile=profile,
+        answers={"alamat_tinggal_saat_ini": "Jl. Nyata No. 1", "lama_tinggal": "3 tahun"},
+        applicant={"nama": "Budi Nyata", "nik": "1234567890123456",
+                   "alamat": "Jl. Nyata No. 1", "no_kk": "9876543210123456"},
+        nomor="", tanggal="24 Juli 2026",
+    )
+    assert isinstance(html, str)
+    assert "Budi Nyata" in html
+    assert "Jl. Nyata No. 1" in html
+    assert "3 tahun" in html
+    assert "None" not in html
+    assert "{{" not in html
+
+
+def test_render_issued_html_bypasses_docx_pipeline_even_when_supported():
+    """domisili has a real docx specimen (DocxLetterRenderer.supports is
+    True) -- render_issued_html must still use the HTML/Jinja path (fast,
+    no LibreOffice subprocess), unlike render_issued() which prefers docx.
+    """
+    template = _template()
+    profile = _profile()
+    started = time.monotonic()
+    html = TemplateRenderService().render_issued_html(
+        template=template, profile=profile,
+        answers={"alamat_tinggal_saat_ini": "X", "lama_tinggal": "Y"},
+        applicant={"nama": "Test", "nik": "1234567890123456"},
+        nomor="", tanggal="24 Juli 2026",
+    )
+    elapsed = time.monotonic() - started
+    assert isinstance(html, str)
+    assert elapsed < 2.0, "render_issued_html should never shell out to LibreOffice"
+
+
+def test_render_issued_html_kk_dual_footer():
+    template = LetterTemplate(
+        id=uuid.uuid4(), code="kk", name="Kartu Keluarga",
+        icon="family_restroom", color_bg="#fff", color_fg="#000", is_active=True,
+        required_documents=[], numbering_prefix="100",
+        numbering_pattern="{prefix}/{seq}/{year}",
+        pdf_body_template="<p>{{ nama }} - {{ status_perubahan }}</p>",
+    )
+    html = TemplateRenderService().render_issued_html(
+        template=template, profile=_profile(),
+        answers={"status_perubahan": "Baru Menikah"},
+        applicant={"nama": "Siti", "nik": "1234567890123456"},
+        nomor="", tanggal="24 Juli 2026",
+    )
+    assert isinstance(html, str)
+    assert "Siti" in html
+    assert "Baru Menikah" in html
+    assert "Mengetahui, Kepala Desa" in html
+
+
+def test_render_issued_html_na_uses_sub_render_path():
+    template = LetterTemplate(
+        id=uuid.uuid4(), code="na", name="Pengantar Nikah",
+        icon="favorite", color_bg="#fff", color_fg="#000", is_active=True,
+        required_documents=[], numbering_prefix="200",
+        numbering_pattern="{prefix}/{seq}/{year}",
+        pdf_body_template="<p>unused for na</p>",
+    )
+    html = TemplateRenderService().render_issued_html(
+        template=template, profile=_profile(),
+        answers={"jk_calon": "Laki-laki"},
+        applicant={"nama": "Andi", "nik": "1234567890123456", "nama_ayah": "Bapak Andi"},
+        nomor="", tanggal="24 Juli 2026",
+    )
+    assert isinstance(html, str)
+    # na_n1's "Nama Lengkap dan Alias" field renders via `{{ nama|upper }}`
+    # (a deliberate uppercase convention for the government N.1 form, see
+    # `_na.py::_NA_N1_BODY`) -- so real applicant data surfaces as "ANDI",
+    # not the literal-case "Andi" input.
+    assert "ANDI" in html
+    assert "FORMULIR PENGANTAR NIKAH" in html

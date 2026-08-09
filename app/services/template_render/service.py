@@ -138,6 +138,32 @@ class TemplateRenderService:
             tanggal=tanggal,
         )
 
+    def render_issued_html(
+        self,
+        *,
+        template: LetterTemplate,
+        profile: VillageProfile,
+        answers: dict,
+        applicant: dict,
+        nomor: str,
+        tanggal: str,
+    ) -> str:
+        """Render the issued letter's body as a plain HTML string, for
+        Tahap 4's live pratinjau (ALUR_REVIEW_INPUT_MASTER.md).
+
+        Unlike `render_issued()`, this ALWAYS uses the hand-authored
+        pdf_body_template HTML/Jinja renderer, never the docx pipeline --
+        docx has no HTML representation to hand back, and the whole point
+        here is a fast, read-only preview without paying LibreOffice's
+        conversion cost.
+        """
+        html = self._renderer(template).render_issued(
+            template=template, profile=profile, answers=answers,
+            applicant=applicant, nomor=nomor, tanggal=tanggal, as_html=True,
+        )
+        assert isinstance(html, str)
+        return html
+
     def render_issued_sub_document(
         self,
         *,
