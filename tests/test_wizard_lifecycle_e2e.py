@@ -104,3 +104,63 @@ async def test_uhc_full_lifecycle_via_http(client, db_session):
 
     regen = await client.post(f"/api/v1/submissions/{submission_id}/regenerate-pdf", headers=staf_h)
     assert regen.status_code == 200, regen.text
+
+
+@pytest.mark.asyncio
+async def test_kematian_full_lifecycle_via_http(client, db_session):
+    """Kematian's staff_extra_data is FLAT (source="extra"), not nested --
+    the almarhum's identity fields live at staff_extra_data's top level,
+    unlike kelahiran/na below which nest under a sesi key."""
+    admin_h = {"Authorization": f"Bearer {await _token(client, 'operator', 'operator123')}"}
+    template = await client.post("/api/v1/templates", json={
+        "code": "mati", "name": "Ket. Kematian", "icon": "sentiment_very_dissatisfied",
+        "color_bg": "#EEF1EE", "color_fg": "#5a6b62",
+        "numbering_prefix": "472", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama_almarhum|upper }} - {{ sebab_meninggal }}</p>",
+        "required_documents": ["Foto KTP"],
+    }, headers=admin_h)
+    template_id = template.json()["data"]["id"]
+    for field_key, label, field_type, options in [
+        ("nama_almarhum", "Nama Almarhum", "text", None),
+        ("nik_almarhum", "NIK Almarhum", "text", None),
+        ("tgl_meninggal", "Tanggal Meninggal", "date", None),
+        ("jam_meninggal", "Jam Meninggal", "text", None),
+        ("tempat_meninggal", "Tempat Meninggal", "select", ["Rumah Domisili", "Rumah Sakit", "Puskesmas", "Lainnya"]),
+        ("sebab_meninggal", "Sebab Kematian", "text", None),
+    ]:
+        body = {"field_key": field_key, "label": label, "field_type": field_type, "is_required": True}
+        if options:
+            body["options"] = options
+        await client.post(f"/api/v1/templates/{template_id}/fields", json=body, headers=admin_h)
+
+    warga_h = {"Authorization": f"Bearer {await _token(client, 'warga', 'warga123')}"}
+    created = await client.post("/api/v1/submissions", json={
+        "template_id": template_id,
+        "applicant_nik": "3201015555000902", "applicant_nama": "Pelapor Uji Kematian",
+        "answers": {
+            "nama_almarhum": "Almarhum Uji", "nik_almarhum": "3201015555000800",
+            "tgl_meninggal": "2026-07-20", "jam_meninggal": "10:00 WIB",
+            "tempat_meninggal": "Rumah Domisili", "sebab_meninggal": "Sakit Biasa",
+        },
+    }, headers=warga_h)
+    assert created.status_code == 200, created.text
+    submission_id = created.json()["data"]["id"]
+
+    staf_h = {"Authorization": f"Bearer {await _token(client, 'staf', 'staf123')}"}
+    extra = await client.put(f"/api/v1/submissions/{submission_id}/extra-data", json={
+        "jk": "Laki-laki", "tempat_lahir": "Bogor", "tanggal_lahir": "1950-01-01",
+        "usia_tahun": "76", "pekerjaan": "Pensiunan", "alamat": "Kp. Uji Kematian",
+        "rt": "003", "rw": "002",
+    }, headers=staf_h)
+    assert extra.status_code == 200, extra.text
+
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=staf_h)
+    assert preview.status_code == 200, preview.text
+    _assert_preview_has_real_data(preview.json()["data"]["html"], "ALMARHUM UJI", "Sakit Biasa")
+
+    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
+    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    assert issued["status"] == "issued"
+
+    pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
+    assert pdf.content[:5] == b"%PDF-"
