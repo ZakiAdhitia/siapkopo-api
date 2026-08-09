@@ -95,6 +95,14 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     )
     assert extra_data.status_code == 200
 
+    preview = await client.get(f"/api/v1/submissions/{submission_id}/preview-html", headers=sh)
+    assert preview.status_code == 200, preview.text
+    preview_html = preview.json()["data"]["html"]
+    assert "Warga Uji" in preview_html
+    assert "Jl. Uji 99" in preview_html
+    assert "None" not in preview_html
+    assert "{{" not in preview_html
+
     approve1 = await client.post(
         f"/api/v1/submissions/{submission_id}/approve", json={"note": "ok"}, headers=sh
     )
