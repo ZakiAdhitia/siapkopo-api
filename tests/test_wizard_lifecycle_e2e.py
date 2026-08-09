@@ -12,6 +12,7 @@ import pytest
 
 async def _token(client, identifier, password):
     r = await client.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
+    assert r.status_code == 200, r.text
     return r.json()["data"]["access_token"]
 
 
@@ -19,8 +20,10 @@ async def _make_rt(client, admin_headers):
     """Create a real RW+RT via the admin API -- REQUIRED_STAFF_FIELDS_BY_JENIS
     needs a genuine rt_id (foreign key), not a placeholder string."""
     rw = await client.post("/api/v1/rw", json={"number": "009"}, headers=admin_headers)
+    assert rw.status_code == 200, rw.text
     rw_id = rw.json()["data"]["id"]
     rt = await client.post("/api/v1/rt", json={"rw_id": rw_id, "number": "004"}, headers=admin_headers)
+    assert rt.status_code == 200, rt.text
     return rt.json()["data"]["id"]
 
 
