@@ -22,13 +22,27 @@ def test_flatten_na_handles_missing_nested_blocks():
 
 
 def test_flatten_kelahiran():
-    flat = _flatten_extra_data("kelahiran", {
-        "anak": {"jk": "Laki-laki", "tanggal_lahir": date(2026, 1, 1)},
-        "ayah": {"pekerjaan": "Petani"},
-    })
+    # The child's own attributes are citizen-input (`answers`) now, not
+    # staff_extra_data -- only ayah/ibu still live in `extra`.
+    flat = _flatten_extra_data(
+        "kelahiran",
+        {"ayah": {"pekerjaan": "Petani"}},
+        {"jk_anak": "Laki-laki", "tanggal_lahir_anak": date(2026, 1, 1)},
+    )
     assert flat["gender_anak"] == "Laki-laki"
     assert flat["tgl_lahir_anak"] == date(2026, 1, 1)
     assert flat["pekerjaan_ayah"] == "Petani"
+
+
+def test_flatten_kelahiran_without_answers_defaults_to_none():
+    flat = _flatten_extra_data("kelahiran", {"ayah": {"pekerjaan": "Petani"}})
+    assert flat["gender_anak"] is None
+    assert flat["pekerjaan_ayah"] == "Petani"
+
+
+def test_flatten_pindah():
+    flat = _flatten_extra_data("pindah", {"alamat_asal": "Kp. Asal", "rt_asal": "003", "rw_asal": "009"})
+    assert flat == {"alamat_asal": "Kp. Asal", "rt_asal": "003", "rw_asal": "009"}
 
 
 def test_flatten_kk():

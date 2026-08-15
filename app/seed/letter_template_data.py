@@ -103,8 +103,16 @@ UBAH_DATA_CATEGORY_DOCS: dict[str, list[str]] = {
 # a new nested/list answer shape (the whole system's `answers` stays a flat
 # dict everywhere else).
 _PINDAH_MAX_ANGGOTA = 7
+# 2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md): SHDK direpresentasikan
+# dengan kode 2-digit resmi (bukan label bebas) -- kode & label digabung
+# jadi satu string ("01 - Kepala Keluarga") sehingga tetap kompatibel dengan
+# rendering pilihan generik yang sudah ada (options adalah list[str] datar,
+# value == label yang ditampilkan) tanpa perlu infrastruktur value/label
+# terpisah untuk satu-satunya field yang membutuhkannya saat ini.
 _SHDK_OPTIONS = [
-    "Suami", "Istri", "Anak", "Orang Tua", "Mertua", "Menantu", "Cucu", "Famili Lain",
+    "01 - Kepala Keluarga", "02 - Suami", "03 - Istri", "04 - Anak",
+    "05 - Menantu", "06 - Cucu", "07 - Orang Tua", "08 - Mertua",
+    "09 - Famili Lain", "10 - Pembantu / Lainnya",
 ]
 
 
@@ -124,19 +132,16 @@ def _pindah_anggota_fields() -> list[tuple]:
     return fields
 
 
-# Dynamic KTP-per-anggota attachment count (item 1, 06/08/2026): reuses the
-# EXISTING Conditional Sub-Category Form mechanism (`category_field_key`/
-# `required_documents_by_category`, built for KK's 5 permohonan categories)
-# with `anggota_yang_ikut`'s own value AS the category -- no new backend
-# mechanism needed. Base `required_documents` (below, "0 anggota" / Kepala
-# Keluarga sendirian case, category field hidden+absent) always has KK +
-# the pemohon's own KTP; each additional anggota adds one more named slot.
-PINDAH_CATEGORY_DOCS: dict[str, list[str]] = {
-    str(n): ["KK", "Foto KTP Pemohon"] + [
-        f"Foto KTP Anggota Keluarga {i}" for i in range(1, n + 1)
-    ]
-    for n in range(0, _PINDAH_MAX_ANGGOTA + 1)
-}
+# Pindah attachments (item, 06/08/2026, REVISED 2026-08-13 per user
+# instruction): originally scaled one "Foto KTP Anggota Keluarga N" slot per
+# `anggota_yang_ikut` via the Conditional Sub-Category Form mechanism
+# (category_field_key/required_documents_by_category). User decided this was
+# unnecessary friction -- lampiran wajib is now just KK + the applicant's own
+# KTP regardless of how many family members are moving with them (their
+# NIK/nama/SHDK are still collected as form DATA via _pindah_anggota_fields()
+# above, just no longer need a separate KTP photo each). Flat
+# required_documents, no category_field_key needed anymore for this template.
+_PINDAH_WAJIB = ["KK", "Foto KTP (Pemohon/Yang Pindah)"]
 
 # NA (Pengantar Nikah) attachment restructure, 06/08/2026: the old single
 # bundled "KTP & KK Calon + Ortu" item is unbundled into the 8 separate
@@ -150,11 +155,12 @@ PINDAH_CATEGORY_DOCS: dict[str, list[str]] = {
 # Kematian/Cerai now scale with `sebab_cerai` via the same
 # category_field_key mechanism as Pindah/KK, instead of one always-shown
 # generic "Akta Cerai (jika Duda/Janda)" line.
+# 2026-08-13: Ayah listed before Ibu per user instruction (was Ibu-then-Ayah).
 _NA_WAJIB = [
     "Foto KTP Calon Suami", "Foto KK Calon Suami",
-    "Foto KTP Ibu Calon Suami", "Foto KTP Ayah Calon Suami",
+    "Foto KTP Ayah Calon Suami", "Foto KTP Ibu Calon Suami",
     "Foto KTP Calon Istri", "Foto KK Calon Istri",
-    "Foto KTP Ibu Calon Istri", "Foto KTP Ayah Calon Istri",
+    "Foto KTP Ayah Calon Istri", "Foto KTP Ibu Calon Istri",
 ]
 NA_CATEGORY_DOCS: dict[str, list[str]] = {
     "Cerai Mati": _NA_WAJIB + ["Foto Akta Kematian Mantan Suami/Istri Terdahulu"],
@@ -312,19 +318,32 @@ SURAT_TEMPLATES: list[dict] = [
         # PERBAIKAN_INPUT_DAN_LAMPIRAN_SURAT.MD Bagian 2.2 (2026-08-02): KTP
         # Orang Tua dan Buku Nikah dihapus dari syarat, foto kedua orang tua
         # (bukan scan KTP) jadi lampiran baru, surat bidan jadi opsional.
-        "required_documents": ["Foto KK", "Foto Kedua Orang Tua Anak"],
+        # 2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md): "Foto Kedua
+        # Orang Tua Anak" dipecah jadi 2 slot terpisah per orang tua, sama
+        # seperti pola unbundling NA/KK.
+        "required_documents": ["Foto KK", "Foto KTP Ayah", "Foto KTP Ibu"],
         "optional_documents": ["Surat Keterangan Kelahiran dari Bidan (Bila Ada)"],
         "numbering_prefix": "474.1",
         "numbering_pattern": "{prefix}/{seq}/Pem",
         "output_category": "dukcapil_pengantar",
         "is_active": True,
-        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): JK/TTL/jam lahir/
-        # anak-ke and both parents' TTL/pekerjaan/alamat move to staff sesi
-        # input (Submission.staff_extra_data, KelahiranExtraData) -- staff
-        # verifies these from the KK/orang-tua photos. Only nama_anak and
-        # each parent's nama+NIK (anchors) stay citizen-input.
+        # 2026-08-08 (Fase 1, ALUR_REVIEW_INPUT_MASTER.md): both parents' TTL/
+        # pekerjaan/alamat move to staff sesi input (Submission.
+        # staff_extra_data, KelahiranExtraData) -- staff verifies these from
+        # the KK/orang-tua photos. 2026-08-13 (user correction): the child's
+        # OWN attributes (JK/tempat lahir/tanggal lahir/jam lahir/anak-ke)
+        # moved BACK to citizen-input here -- staff has no photo of the
+        # newborn to verify these against (that's the whole point of this
+        # letter), only the parent can actually report them. Only each
+        # parent's nama+NIK (anchors) plus the child's own attributes stay
+        # citizen-input; the parents' TTL/pekerjaan/alamat stay staff-side.
         "fields": [
             ("nama_anak", "Nama Anak", "text", None, "nama lengkap bayi/anak", True, None),
+            ("jk_anak", "Jenis Kelamin Anak", "select", ["Laki-laki", "Perempuan"], None, True, None),
+            ("tempat_lahir_anak", "Tempat Lahir Anak", "text", None, "mis. Bogor", True, None),
+            ("tanggal_lahir_anak", "Tanggal Lahir Anak", "date", None, None, True, None),
+            ("jam_lahir_anak", "Jam Lahir Anak", "time", None, None, True, None),
+            ("anak_ke", "Anak Ke-", "text", None, "mis. 1", True, None),
             ("nama_ayah", "Nama Ayah", "text", None, "nama lengkap ayah kandung", True, None),
             ("nik_ayah", "NIK Ayah", "text", None, "16 digit NIK ayah", True, None),
             ("nama_ibu", "Nama Ibu", "text", None, "nama lengkap ibu kandung", True, None),
@@ -371,7 +390,7 @@ SURAT_TEMPLATES: list[dict] = [
         "description": "Surat Keterangan Kematian Penduduk",
         # PERBAIKAN_INPUT_DAN_LAMPIRAN_SURAT.MD Bagian 3.2 (2026-08-02): surat
         # dokter/RS jadi opsional, label KTP/KK dirapikan.
-        "required_documents": ["Foto KTP (Almarhum/Almarhumah)", "Foto KK (Almarhum/Almarhumah)"],
+        "required_documents": ["Foto KTP (Almarhum/Almarhumah)", "Foto KK"],
         "optional_documents": ["Surat Kematian dari Dokter (Bila Ada)"],
         "numbering_prefix": "472",
         "numbering_pattern": "{prefix}/{seq}/Pem",
@@ -387,7 +406,7 @@ SURAT_TEMPLATES: list[dict] = [
             ("nama_almarhum", "Nama Almarhum / Almarhumah", "text", None, "nama lengkap almarhum", True, None),
             ("nik_almarhum", "NIK Almarhum", "text", None, "16 digit NIK", True, None),
             ("tgl_meninggal", "Tanggal Meninggal", "date", None, None, True, None),
-            ("jam_meninggal", "Jam Meninggal", "text", None, "mis. 14:15 WIB", True, None),
+            ("jam_meninggal", "Jam Meninggal", "time", None, None, True, None),
             ("tempat_meninggal", "Tempat Meninggal", "select", ["Rumah Domisili", "Rumah Sakit", "Puskesmas", "Lainnya"], None, True, None),
             ("sebab_meninggal", "Sebab Kematian", "text", None, "mis. Sakit Biasa / Usia Lanjut", True, None),
         ],
@@ -423,7 +442,10 @@ SURAT_TEMPLATES: list[dict] = [
         "color_bg": "#FFF4EC", "color_fg": "#E06D20",
         "description": "Surat Pengantar & Kelengkapan Berkas Nikah (5 Sub-Dokumen)",
         "required_documents": _NA_WAJIB,
-        "optional_documents": ["Foto Ijazah/Akte Kelahiran Kedua Calon (Bila Ada)"],
+        "optional_documents": [
+            "Foto Ijazah/Akte Kelahiran Calon Suami (Bila Ada)",
+            "Foto Ijazah/Akte Kelahiran Calon Istri (Bila Ada)",
+        ],
         "category_field_key": "sebab_cerai",
         "required_documents_by_category": NA_CATEGORY_DOCS,
         "numbering_prefix": "474.2",
@@ -581,11 +603,9 @@ SURAT_TEMPLATES: list[dict] = [
         "code": "pindah", "name": "Surat Pindah", "icon": "moving",
         "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
         "description": "Pengantar Pindah Domisili Keluar",
-        # "0 anggota lain" case (Kepala Keluarga pindah sendirian) -- see
-        # PINDAH_CATEGORY_DOCS above for how this scales with anggota_yang_ikut.
-        "required_documents": PINDAH_CATEGORY_DOCS["0"],
-        "category_field_key": "anggota_yang_ikut",
-        "required_documents_by_category": PINDAH_CATEGORY_DOCS,
+        # 2026-08-13: flat, no longer scales per anggota_yang_ikut -- see
+        # _PINDAH_WAJIB above.
+        "required_documents": _PINDAH_WAJIB,
         "numbering_prefix": "475",
         # Real F-1.03 specimen DOES print a village "Nomor" ("457 -Pem",
         # confirmed 06/08/2026 by reading the actual specimen -- the older
@@ -596,19 +616,16 @@ SURAT_TEMPLATES: list[dict] = [
         "output_category": "dukcapil_pengantar",
         "is_active": True,
         "fields": [
-            # Alamat asal (item 4, 06/08/2026): the applicant's CURRENT
-            # address is always within Desa Kopo (that's who's eligible to
-            # file this letter), so unlike alamat_tujuan below, rt_asal/
-            # rw_asal have no kel_desa_/kec_/kab_kota_/provinsi_ sibling --
-            # isVillageLocalRtRw (src/utils/rtRwField.js) picks that up
-            # automatically and renders them as a village RW->RT dropdown,
-            # not free text. Desa/Kecamatan/Kabupaten/Provinsi for "asal"
-            # are always Desa Kopo's own (fixed, not asked -- see
-            # PINDAH_TEMPLATE.docx, which prints VillageProfile's own fields
-            # for that section instead of a warga-typed answer).
-            ("alamat_asal", "Alamat Asal (Kp/Jalan)", "text", None, "mis. KP. Kopo Tengah", True, None),
-            ("rt_asal", "RT Asal", "text", None, "mis. 003", True, None),
-            ("rw_asal", "RW Asal", "text", None, "mis. 009", True, None),
+            # Alamat asal (2026-08-13, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md
+            # 13/08 round): moved OUT of citizen answers into staff sesi
+            # input (Submission.staff_extra_data, PindahExtraData) -- staff
+            # verifies alamat/RT/RW asal from the citizen's KTP/KK photo,
+            # mirroring Domisili's own alamat_asal sesi. Previously a
+            # citizen-facing text field here; also fixes a real bug where
+            # the domain-master table silently saved a DIFFERENT value
+            # (the generic staff `alamat`) than what the issued PDF printed
+            # (the citizen's own `alamat_asal` answer) -- see
+            # SubmissionService._save_to_domain_master's "pindah" branch.
             ("alamat_tujuan", "Alamat Tujuan (Kp/Jalan)", "text", None, "mis. Jl. Tanah Seratus No. 38", True, None),
             ("rt_tujuan", "RT Tujuan", "text", None, "mis. 005", True, None),
             ("rw_tujuan", "RW Tujuan", "text", None, "mis. 011", True, None),

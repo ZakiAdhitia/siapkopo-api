@@ -27,12 +27,12 @@ async def _make_rt(client, admin_headers):
     return rt.json()["data"]["id"]
 
 
-async def _approve_to_issued(client, submission_id, staf_headers, sekdes_headers):
+async def _approve_to_issued(client, submission_id, staf_headers):
     """The fixed 2-step approve chain every jenis shares (SubmissionService.APPROVAL_STEP_COUNT)."""
     step1 = await client.post(f"/api/v1/submissions/{submission_id}/approve", json={"note": "ok"}, headers=staf_headers)
     assert step1.status_code == 200, step1.text
     assert step1.json()["data"]["status"] == "pending"
-    step2 = await client.post(f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=sekdes_headers)
+    step2 = await client.post(f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=staf_headers)
     assert step2.status_code == 200, step2.text
     body = step2.json()["data"]
     assert body["status"] == "issued"
@@ -97,8 +97,7 @@ async def test_uhc_full_lifecycle_via_http(client, db_session):
         preview.json()["data"]["html"], "WARGA UJI UHC", "Keringanan Biaya Rumah Sakit",
     )
 
-    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
-    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    issued = await _approve_to_issued(client, submission_id, staf_h)
     assert issued["letter_number"] is None
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
@@ -161,8 +160,7 @@ async def test_kematian_full_lifecycle_via_http(client, db_session):
     assert preview.status_code == 200, preview.text
     _assert_preview_has_real_data(preview.json()["data"]["html"], "ALMARHUM UJI", "Sakit Biasa")
 
-    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
-    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    issued = await _approve_to_issued(client, submission_id, staf_h)
     assert issued["status"] == "issued"
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
@@ -218,8 +216,7 @@ async def test_kelahiran_full_lifecycle_via_http(client, db_session):
     assert preview.status_code == 200, preview.text
     _assert_preview_has_real_data(preview.json()["data"]["html"], "BAYI UJI", "AYAH UJI", "IBU UJI")
 
-    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
-    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    issued = await _approve_to_issued(client, submission_id, staf_h)
     assert issued["status"] == "issued"
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
@@ -291,8 +288,7 @@ async def test_na_full_lifecycle_via_http(client, db_session):
     assert preview.status_code == 200, preview.text
     _assert_preview_has_real_data(preview.json()["data"]["html"], "CALON UJI NA", "FORMULIR PENGANTAR NIKAH")
 
-    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
-    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    issued = await _approve_to_issued(client, submission_id, staf_h)
     assert issued["status"] == "issued"
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)
@@ -353,8 +349,7 @@ async def test_kk_full_lifecycle_via_http(client, db_session):
         preview.json()["data"]["html"], "KEPALA KELUARGA UJI KK", "Baru Menikah (Pecah KK Mandiri)",
     )
 
-    sekdes_h = {"Authorization": f"Bearer {await _token(client, 'sekdes', 'sekdes123')}"}
-    issued = await _approve_to_issued(client, submission_id, staf_h, sekdes_h)
+    issued = await _approve_to_issued(client, submission_id, staf_h)
     assert issued["status"] == "issued"
 
     pdf = await client.get(f"/api/v1/submissions/{submission_id}/pdf", headers=warga_h)

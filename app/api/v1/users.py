@@ -36,7 +36,7 @@ def _user_read(user: User) -> dict:
     """Build a UserRead-shaped dict, deriving role/position display fields
     from the already-loaded (lazy="selectin") relationships."""
     return UserRead(
-        id=user.id, username=user.username, nik=user.nik, full_name=user.full_name,
+        id=user.id, username=user.username, full_name=user.full_name,
         email=user.email, phone=user.phone, is_active=user.is_active,
         pending_approval=user.pending_approval, role_id=user.role_id,
         role_name=user.role.name, position_id=user.position_id,

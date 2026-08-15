@@ -1,9 +1,7 @@
 """Letter template CRUD endpoints: template + field management, PDF preview."""
-import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
@@ -62,7 +60,9 @@ async def get_template(
 ) -> dict:
     """Get a single letter template by id."""
     obj = await LetterTemplateService(session).get_or_404(template_id)
-    return success_response(LetterTemplateRead.model_validate(obj).model_dump(mode="json"))
+    data = LetterTemplateRead.model_validate(obj).model_dump(mode="json")
+    data["uses_docx_template"] = TemplateRenderService().uses_docx_template(obj.code)
+    return success_response(data)
 
 
 @router.put("/templates/{template_id}", response_model=Envelope[LetterTemplateRead])
@@ -181,15 +181,15 @@ async def preview_template(
     template_id: UUID,
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("template:read")),
-) -> StreamingResponse:
+) -> Response:
     """Render a PDF preview of the template using auto-generated sample data."""
     service = LetterTemplateService(session)
     template = await service.get_or_404(template_id)
     fields = await service.list_fields(template_id)
     profile = await VillageProfileService(session).get()
     pdf_bytes = TemplateRenderService().render_preview(template, fields, profile)
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes),
+    return Response(
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="preview-{template.code}.pdf"'},
     )

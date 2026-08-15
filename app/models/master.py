@@ -616,6 +616,11 @@ class MasterPindah(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     nik_pemohon: Mapped[str] = mapped_column(String(20), index=True)
     no_kk: Mapped[str | None] = mapped_column(String(20), nullable=True)
     alamat_asal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # rt_asal/rw_asal added 2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md):
+    # alamat_asal existed but silently dropped RT/RW entirely -- staff now
+    # supplies all three together via PindahExtraData (staff_extra_data).
+    rt_asal: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    rw_asal: Mapped[str | None] = mapped_column(String(10), nullable=True)
     alamat_tujuan: Mapped[str | None] = mapped_column(Text, nullable=True)
     rt_tujuan: Mapped[str | None] = mapped_column(String(10), nullable=True)
     rw_tujuan: Mapped[str | None] = mapped_column(String(10), nullable=True)

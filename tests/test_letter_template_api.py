@@ -81,3 +81,29 @@ async def test_template_preview_returns_pdf(client):
     assert preview.status_code == 200
     assert preview.content[:5] == b"%PDF-"
     assert preview.headers["content-type"] == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_get_template_reports_uses_docx_template(client):
+    """2026-08-13 (Tahap 4 preview redesign): frontend uses this flag to
+    decide between the real docx PDF viewer and the WYSIWYG HTML editor."""
+    tok = await _token(client)
+    h = {"Authorization": f"Bearer {tok}"}
+
+    docx_backed = await client.post("/api/v1/templates", json={
+        "code": "domisili", "name": "Surat Domisili",
+        "icon": "home_pin", "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "470", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    }, headers=h)
+    got = await client.get(f"/api/v1/templates/{docx_backed.json()['data']['id']}", headers=h)
+    assert got.json()["data"]["uses_docx_template"] is True
+
+    non_docx = await client.post("/api/v1/templates", json={
+        "code": "ubah_data", "name": "Perubahan Elemen Data Kependudukan", "icon": "edit_document",
+        "color_bg": "#FDF2E9", "color_fg": "#C6690B",
+        "numbering_prefix": "474.1", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    }, headers=h)
+    got2 = await client.get(f"/api/v1/templates/{non_docx.json()['data']['id']}", headers=h)
+    assert got2.json()["data"]["uses_docx_template"] is False

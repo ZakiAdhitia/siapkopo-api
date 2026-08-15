@@ -43,11 +43,32 @@ from app.services.template_render.service import _hari_indonesia
 
 logger = get_logger("submission")
 
+
+def _uppercase_nama_values(data: Any) -> Any:
+    """Recursively uppercase every string value stored under a key
+    containing "nama" (case-insensitive) -- names are always written in
+    capitals on KTP/KK and every official surat, so this normalizes both
+    what warga type into the submission form and what staff type into
+    Tahap 3, regardless of nesting (e.g. KK's `anggota` list of
+    {nama, nik, ...} dicts inside staff_extra_data).
+    """
+    if isinstance(data, dict):
+        return {
+            k: (v.upper() if isinstance(v, str) and "nama" in k.lower() else _uppercase_nama_values(v))
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [_uppercase_nama_values(item) for item in data]
+    return data
+
 # Fixed number of approve() calls (by anyone holding submission:approve) a
 # submission needs before it's issued -- previously a DB-configured,
 # role-gated chain (`approval_step_configs`); simplified to a plain
-# constant, no more per-step role restriction.
-APPROVAL_STEP_COUNT = 2
+# constant, no more per-step role restriction. 2026-08-13: dropped from 2 to
+# 1 -- with no per-step role gating, a 2nd click by the same staff member
+# added confusing no-op friction ("approve" appeared to do nothing) instead
+# of a real second sign-off, so one Approve click now issues immediately.
+APPROVAL_STEP_COUNT = 1
 
 
 class SubmissionService:
@@ -89,6 +110,14 @@ class SubmissionService:
     # Fields that legitimately hold the applicant's OWN nik/name -- never
     # compared against themselves in the "harus berbeda dari pemohon" checks.
     _SELF_KEYS = {"nik", "nama"}
+    # nama_ayah/nik_ayah/nama_ibu/nik_ibu mean different things per jenis:
+    # for NA they're the *applicant's own* parents (calon's ayah/ibu), who
+    # by definition can never be the applicant themselves. For Kelahiran
+    # they're the *newborn's* parents, and the person filing a birth letter
+    # is very often literally the father or mother -- so those two must NOT
+    # be rejected for matching the applicant's own nik/nama.
+    _PARENT_KEYS = {"nama_ayah", "nik_ayah", "nama_ibu", "nik_ibu"}
+    _PARENT_MAY_MATCH_APPLICANT_JENIS = {"kelahiran"}
 
     @staticmethod
     def _field_visible(field: TemplateField, answers: dict) -> bool:
@@ -105,6 +134,7 @@ class SubmissionService:
 
     def _validate_answers(
         self, fields: list[TemplateField], answers: dict, applicant: dict | None = None,
+        jenis: str | None = None,
     ) -> None:
         """Validate submitted answers against the template's field definitions.
 
@@ -113,12 +143,16 @@ class SubmissionService:
         choice/number checks, also enforces (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md):
         conditionally-required fields stay required only while visible, NIK-
         shaped fields must be 16 digits, RT/RW-shaped fields must be numeric,
-        birth-date fields can't be today/future, and third-party NIK/name
-        fields (ayah/ibu/pasangan) can't equal the applicant's own.
+        birth-date fields can't be today/future, death-date fields can't be
+        future (today IS allowed, unlike birth dates), and third-party
+        NIK/name fields (ayah/ibu/pasangan) can't equal the applicant's own
+        -- except Kelahiran's ayah/ibu, who plausibly ARE the applicant
+        (see _PARENT_MAY_MATCH_APPLICANT_JENIS).
         """
         errors: list[str] = []
         applicant_nik = (applicant or {}).get("nik")
         applicant_nama = (applicant or {}).get("nama")
+        parent_may_match_applicant = jenis in self._PARENT_MAY_MATCH_APPLICANT_JENIS
         for field in fields:
             key = field.field_key
             visible = self._field_visible(field, answers)
@@ -142,18 +176,29 @@ class SubmissionService:
                 text_value = str(value).strip()
                 if not self._NIK_RE.match(text_value):
                     errors.append(f"{field.label} harus berupa 16 digit angka")
-                elif key not in self._SELF_KEYS and applicant_nik and text_value == applicant_nik:
+                elif key not in self._SELF_KEYS and applicant_nik and text_value == applicant_nik \
+                        and not (parent_may_match_applicant and key in self._PARENT_KEYS):
                     errors.append(f"{field.label} tidak boleh sama dengan NIK pemohon")
             if (key == "rt" or key.startswith("rt_") or key == "rw" or key.startswith("rw_")) \
                     and field.field_type == FieldType.TEXT and not self._RT_RW_RE.match(str(value).strip()):
                 errors.append(f"{field.label} harus berupa angka (mis. 01)")
-            if field.field_type == FieldType.DATE and "meninggal" not in key \
+            # "anak" (Kelahiran's newborn) is routinely filed the SAME DAY as
+            # birth -- unlike every other tanggal_lahir field here (the
+            # applicant's/a relative's own, always already in the past),
+            # "today" must be allowed, only the future is actually invalid.
+            if field.field_type == FieldType.DATE and "meninggal" not in key and "anak" not in key \
                     and ("tanggal_lahir" in key or "tgl_lahir" in key):
                 parsed = self._parse_date(value)
                 if parsed and parsed >= date.today():
                     errors.append(f"{field.label} tidak boleh hari ini atau di masa depan")
+            if field.field_type == FieldType.DATE and ("meninggal" in key or "anak" in key) \
+                    and ("tanggal_lahir" in key or "tgl_lahir" in key or "meninggal" in key):
+                parsed = self._parse_date(value)
+                if parsed and parsed > date.today():
+                    errors.append(f"{field.label} tidak boleh di masa depan")
             if key not in self._SELF_KEYS and key in ("nama_ayah", "nama_ibu", "nama_pasangan") \
-                    and applicant_nama and str(value).strip().lower() == applicant_nama.strip().lower():
+                    and applicant_nama and str(value).strip().lower() == applicant_nama.strip().lower() \
+                    and not (parent_may_match_applicant and key in self._PARENT_KEYS):
                 errors.append(f"{field.label} tidak boleh sama dengan nama pemohon")
         if errors:
             raise ValidationAppError("; ".join(errors))
@@ -163,10 +208,11 @@ class SubmissionService:
         tanggal_lahir, pekerjaan, status_kawin, rt, rw, rt_id} block every
         PDF template and domain-master row reads (SYARAT-PENGAJUAN-SURAT.md's
         "Field yang identik di semua surat"), plus (2026-08-08, Fase 1 of
-        ALUR_REVIEW_INPUT_MASTER.md) the flattened letter-specific staff
-        sesi data from `staff_extra_data` for jenis that have it (Domisili's
-        alamat asal, NA's ayah/ibu/CSI, Kematian's almarhum, Kelahiran's
-        ayah/ibu) -- see domain_master._flatten_extra_data. Both blocks are
+        ALUR_REVIEW_INPUT_MASTER.md; Pindah's alamat asal added 2026-08-13)
+        the flattened letter-specific staff sesi data from `staff_extra_data`
+        for jenis that have it (Domisili's/Pindah's alamat asal, NA's
+        ayah/ibu/CSI, Kematian's almarhum, Kelahiran's ayah/ibu) -- see
+        domain_master._flatten_extra_data. Both blocks are
         staff-entered via PUT .../master-data and PUT .../extra-data
         respectively; nama/nik are fixed on the submission itself at
         creation time.
@@ -192,7 +238,7 @@ class SubmissionService:
         template = await self.template_repo.get(submission.template_id)
         jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
         if jenis:
-            snapshot.update(_flatten_extra_data(jenis, submission.staff_extra_data or {}))
+            snapshot.update(_flatten_extra_data(jenis, submission.staff_extra_data or {}, submission.answers or {}))
         return snapshot
 
     async def create(
@@ -201,11 +247,14 @@ class SubmissionService:
         physical_documents_promised: bool = False,
     ) -> Submission:
         """Create a new submission after validating answers against the template."""
+        answers = _uppercase_nama_values(answers)
+        applicant_nama = applicant_nama.upper()
         template = await self.template_repo.get(template_id)
         if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower())
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama}, jenis)
 
         obj = Submission(
             template_id=template_id,
@@ -268,11 +317,14 @@ class SubmissionService:
         given file is validated for size/mime and checked for blur before
         anything is written to the database.
         """
+        answers = _uppercase_nama_values(answers)
+        applicant_nama = applicant_nama.upper()
         template = await self.template_repo.get(template_id)
         if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower())
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama}, jenis)
 
         required_docs = set(self._resolve_required_documents(template, answers))
         optional_docs = set(template.optional_documents)
@@ -291,7 +343,7 @@ class SubmissionService:
 
         storage = FileStorageService()
         for label, _filename, content, content_type in attachments:
-            storage.validate_upload(content, content_type)
+            storage.validate_upload(content, content_type, allow_pdf=label not in required_docs)
             storage.check_not_blurry(content, content_type, label)
 
         obj = Submission(
@@ -349,6 +401,8 @@ class SubmissionService:
         via walk-in would silently produce a letter with missing data.
         Wiring `staff_extra_data` input into Mode Loket is a later phase.
         """
+        answers = _uppercase_nama_values(answers)
+        applicant_nama = applicant_nama.upper()
         template = await self.template_repo.get(template_id)
         if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
@@ -359,7 +413,7 @@ class SubmissionService:
                 "gunakan alur pengajuan biasa"
             )
         fields = await self._list_template_fields(template_id)
-        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama})
+        self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama}, jenis)
 
         obj = Submission(
             template_id=template_id,
@@ -394,12 +448,15 @@ class SubmissionService:
         rejected). Re-validated against the template's own field rules
         exactly like a fresh submission would be.
         """
+        answers = _uppercase_nama_values(answers)
         obj = await self.get_or_404(submission_id)
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
             raise ValidationAppError("Data formulir tidak bisa diedit untuk pengajuan yang ditolak")
         fields = await self._list_template_fields(obj.template_id)
         applicant = await self.build_applicant_snapshot(obj)
-        self._validate_answers(fields, answers, applicant)
+        template = await self.template_repo.get(obj.template_id)
+        jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower()) if template else None
+        self._validate_answers(fields, answers, applicant, jenis)
         obj.answers = answers
         await self.session.commit()
         logger.info("Submission answers updated by staff submission_id=%s", submission_id)
@@ -432,6 +489,7 @@ class SubmissionService:
         more top-level keys of the jenis's staff_extra_data schema), so
         staff can save one sesi at a time without resending the others.
         """
+        sesi_updates = _uppercase_nama_values(sesi_updates)
         obj = await self.get_or_404(submission_id)
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
             raise ValidationAppError("Data master tidak bisa diedit untuk pengajuan yang ditolak")
@@ -450,6 +508,34 @@ class SubmissionService:
         obj.staff_extra_data = validated.model_dump(mode="json")
         await self.session.commit()
         logger.info("Submission extra data updated submission_id=%s", submission_id)
+        return obj
+
+    async def update_preview_html(self, submission_id: uuid.UUID, html: str) -> Submission:
+        """Staff's manually-edited full letter HTML (Tahap 4's WYSIWYG
+        editor, 2026-08-13) -- becomes the source of truth for the issued/
+        regenerated PDF (see `_issue()`/`regenerate_pdf()`) instead of a
+        fresh render, and `get_preview_html()` returns it back as-is once set.
+
+        Only letter types with NO real docx specimen may use this (currently
+        just "ubah_data") -- every other jenis's official PDF is rendered
+        from a real Word document matching Disdukcapil/KUA's exact form
+        (F-1.02/F-1.03/etc); letting an HTML edit silently replace that
+        would visually break the official format. Tahap 4's UI already only
+        shows the WYSIWYG editor (vs. the real-PDF viewer) for non-docx
+        jenis, but this is enforced server-side too, not just by hiding the
+        button.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
+            raise ValidationAppError("Surat tidak bisa diedit untuk pengajuan yang ditolak")
+        template = await self.template_repo.get(obj.template_id)
+        if template is not None and TemplateRenderService().uses_docx_template(template.code):
+            raise ValidationAppError(
+                "Surat ini memakai format dokumen resmi (Word) dan tidak bisa diedit langsung di sini"
+            )
+        obj.edited_preview_html = html
+        await self.session.commit()
+        logger.info("Submission preview HTML edited by staff submission_id=%s", submission_id)
         return obj
 
     async def search_guest_submissions(self, nik: str) -> list[Submission]:
@@ -509,7 +595,7 @@ class SubmissionService:
                 f"'{document_label}' bukan lampiran yang diperlukan untuk surat ini"
             )
         storage = FileStorageService()
-        storage.validate_upload(content, content_type)
+        storage.validate_upload(content, content_type, allow_pdf=document_label not in template.required_documents)
         storage_path = await storage.save(content, filename, subdir="attachments")
 
         attachment = SubmissionAttachment(
@@ -534,12 +620,12 @@ class SubmissionService:
         )
         return list((await self.session.scalars(stmt)).all())
 
-    async def get_attachment_file(
+    async def _get_attachment_scoped(
         self, submission_id: uuid.UUID, attachment_id: uuid.UUID,
         actor_user_id: uuid.UUID, actor_permissions: list[str],
-    ) -> tuple[bytes, SubmissionAttachment]:
-        """Return an attachment's file bytes, enforcing the same ownership/
-        read_all scope as the submission it belongs to."""
+    ) -> SubmissionAttachment:
+        """Enforce the same ownership/read_all scope as the submission the
+        attachment belongs to, then return the attachment row."""
         await self.get_scoped(submission_id, actor_user_id, actor_permissions)
         attachment = await self.session.scalar(
             select(SubmissionAttachment).where(
@@ -550,8 +636,33 @@ class SubmissionService:
         )
         if attachment is None:
             raise NotFoundError("Lampiran tidak ditemukan")
+        return attachment
+
+    async def get_attachment_file(
+        self, submission_id: uuid.UUID, attachment_id: uuid.UUID,
+        actor_user_id: uuid.UUID, actor_permissions: list[str],
+    ) -> tuple[bytes, SubmissionAttachment]:
+        """Return an attachment's original file bytes (used by "Unduh")."""
+        attachment = await self._get_attachment_scoped(
+            submission_id, attachment_id, actor_user_id, actor_permissions
+        )
         content = await FileStorageService().read(attachment.storage_path)
         return content, attachment
+
+    async def get_attachment_preview(
+        self, submission_id: uuid.UUID, attachment_id: uuid.UUID,
+        actor_user_id: uuid.UUID, actor_permissions: list[str],
+    ) -> tuple[bytes, str, SubmissionAttachment]:
+        """Return a downscaled preview of an attachment (see
+        FileStorageService.read_preview) -- used by the staff lampiran
+        viewer instead of the full original."""
+        attachment = await self._get_attachment_scoped(
+            submission_id, attachment_id, actor_user_id, actor_permissions
+        )
+        content, content_type = await FileStorageService().read_preview(
+            attachment.storage_path, attachment.content_type
+        )
+        return content, content_type, attachment
 
     async def list_history(self, submission_id: uuid.UUID) -> list[SubmissionStatusHistory]:
         """Return a submission's status history, oldest first."""
@@ -836,7 +947,8 @@ class SubmissionService:
                 nama_pemohon=applicant.get("nama", "-"),
                 nik_pemohon=applicant.get("nik", "-"),
                 no_kk=applicant.get("no_kk"),
-                alamat_asal=applicant.get("alamat"),
+                alamat_asal=applicant.get("alamat_asal"),
+                rt_asal=applicant.get("rt_asal"), rw_asal=applicant.get("rw_asal"),
                 alamat_tujuan=answers.get("alamat_tujuan"),
                 rt_tujuan=answers.get("rt_tujuan"), rw_tujuan=answers.get("rw_tujuan"),
                 kel_desa_tujuan=answers.get("kel_desa_tujuan"), kec_tujuan=answers.get("kec_tujuan"),
@@ -917,11 +1029,16 @@ class SubmissionService:
             render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
 
         file_service = TemplateFileService()
-        pdf_bytes, storage_path = await file_service.render_and_save(
-            template=template, fields=fields, profile=village,
-            answers=render_answers, applicant=applicant, nomor="",
-            tanggal=tanggal,
-        )
+        if submission.edited_preview_html:
+            pdf_bytes, storage_path = await file_service.render_and_save_from_html(
+                html=submission.edited_preview_html, template_code=template.code,
+            )
+        else:
+            pdf_bytes, storage_path = await file_service.render_and_save(
+                template=template, fields=fields, profile=village,
+                answers=render_answers, applicant=applicant, nomor="",
+                tanggal=tanggal,
+            )
 
         submission.status = SubmissionStatus.ISSUED
         submission.pdf_storage_path = storage_path
@@ -984,11 +1101,16 @@ class SubmissionService:
             render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
 
         file_service = TemplateFileService()
-        _, storage_path = await file_service.render_and_save(
-            template=template, fields=fields, profile=village,
-            answers=render_answers, applicant=applicant, nomor="",
-            tanggal=tanggal,
-        )
+        if obj.edited_preview_html:
+            _, storage_path = await file_service.render_and_save_from_html(
+                html=obj.edited_preview_html, template_code=template.code,
+            )
+        else:
+            _, storage_path = await file_service.render_and_save(
+                template=template, fields=fields, profile=village,
+                answers=render_answers, applicant=applicant, nomor="",
+                tanggal=tanggal,
+            )
         obj.pdf_storage_path = storage_path
 
         if template.sub_documents:
@@ -1087,10 +1209,17 @@ class SubmissionService:
         (same reasoning as `regenerate_pdf()`) so the preview matches the
         already-issued PDF instead of drifting forward every time staff
         reopen the page.
+
+        If staff already saved an edit via `update_preview_html`, that
+        edited HTML is returned as-is instead of a fresh render -- so
+        reopening the editor shows what they last saved, not a version that
+        silently discards their edit.
         """
         obj = await self.get_or_404(submission_id)
         if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
             raise ValidationAppError("Pratinjau tidak tersedia untuk pengajuan yang ditolak")
+        if obj.edited_preview_html:
+            return obj.edited_preview_html
         template = await self.template_repo.get(obj.template_id)
         village = await VillageProfileService(self.session).get()
         applicant = await self.build_applicant_snapshot(obj)
@@ -1104,6 +1233,51 @@ class SubmissionService:
 
         return TemplateRenderService().render_issued_html(
             template=template, profile=village, answers=render_answers,
+            applicant=applicant, nomor="", tanggal=tanggal,
+        )
+
+    async def get_preview_pdf(self, submission_id: uuid.UUID) -> bytes:
+        """Render the REAL issued-format PDF (docx specimen pipeline when
+        the letter type has one -- F-1.02/F-1.03/etc, same as `_issue()`
+        would produce) using the submission's current data, without marking
+        anything issued or saving a file (2026-08-13: Tahap 4 preview
+        redesign -- staff need to see the actual official document, not the
+        separate always-HTML `get_preview_html()` rendering, which visually
+        diverges from the real docx-backed letters for 8 of 9 jenis).
+
+        Mirrors `get_preview_html()`'s context-building exactly, just calls
+        `render_issued()` (docx-aware) instead of `render_issued_html()`
+        (always-HTML) and needs `fields` too (`render_issued()` uses it for
+        the HTML-fallback path, `render_issued_html` doesn't take it at all).
+
+        Once ISSUED, the PDF is already frozen on disk at
+        `pdf_storage_path` -- read that back directly instead of re-running
+        the docxtpl+LibreOffice pipeline (multi-second) on every reopen.
+        This also keeps the preview honest: after issuance, "Generate Ulang
+        PDF" is the one deliberate, staff-triggered way to refresh the
+        stored file from current data (see `regenerate_pdf`) -- a live
+        re-render here would silently show any data edited after issuance
+        instead of what was actually issued/downloadable.
+        """
+        obj = await self.get_or_404(submission_id)
+        if obj.status not in (SubmissionStatus.PENDING, SubmissionStatus.ISSUED):
+            raise ValidationAppError("Pratinjau tidak tersedia untuk pengajuan yang ditolak")
+        if obj.status == SubmissionStatus.ISSUED and obj.pdf_storage_path:
+            return await FileStorageService().read(obj.pdf_storage_path)
+        template = await self.template_repo.get(obj.template_id)
+        fields = await self._list_template_fields(obj.template_id)
+        village = await VillageProfileService(self.session).get()
+        applicant = await self.build_applicant_snapshot(obj)
+
+        now = obj.issued_at or datetime.now(timezone.utc)
+        tanggal = format_tanggal_indonesia(now)
+        render_answers = dict(obj.answers or {})
+        if template.code == "domisili":
+            berlaku_date = self._compute_berlaku(now.date(), applicant.get("masa_berlaku_bulan"))
+            render_answers["berlaku"] = format_tanggal_indonesia(berlaku_date) if berlaku_date else "-"
+
+        return TemplateRenderService().render_issued(
+            template=template, fields=fields, profile=village, answers=render_answers,
             applicant=applicant, nomor="", tanggal=tanggal,
         )
 
@@ -1163,11 +1337,9 @@ class SubmissionService:
     async def approve(
         self, submission_id: uuid.UUID, actor: User, note: str | None
     ) -> Submission:
-        """Advance a submission one step, or issue it if this was the final step.
-
-        No role-gating per step -- anyone holding the `submission:approve`
-        permission (endpoint-level gate) may act at any step of the fixed
-        `APPROVAL_STEP_COUNT`-step chain.
+        """Approve and issue a submission (APPROVAL_STEP_COUNT == 1: one
+        approve() call is always the final step). Gated only by the
+        `submission:approve` permission at the endpoint level, not by role.
         """
         obj = await self.get_or_404(submission_id)
         if obj.status != SubmissionStatus.PENDING:

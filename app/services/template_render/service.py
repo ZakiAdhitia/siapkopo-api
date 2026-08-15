@@ -84,6 +84,14 @@ class TemplateRenderService:
     # Public API
     # ------------------------------------------------------------------
 
+    def uses_docx_template(self, template_code: str) -> bool:
+        """Whether `template_code` renders from a real Word specimen file
+        (DocxLetterRenderer) rather than the hand-authored HTML/Jinja
+        pipeline -- lets staff-facing UI (Tahap 4 preview) decide whether to
+        show the real official-format PDF (view-only) or the editable HTML
+        preview (only "ubah_data" has no docx specimen)."""
+        return self._docx_renderer.supports(template_code)
+
     def render_preview(
         self,
         template: LetterTemplate,

@@ -10,7 +10,7 @@ def _validate_email_format(value: str) -> str:
 
 
 class LoginRequest(BaseModel):
-    """Login credentials: identifier matches username OR nik."""
+    """Login credentials: identifier matches username, email, or phone."""
 
     identifier: str = Field(min_length=1)
     password: str

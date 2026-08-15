@@ -38,3 +38,18 @@ def test_kk_header_fields_have_correct_effective_source():
     assert "source" not in by_key["rt_id"]
     assert by_key["nama_kk"]["source"] == "extra"
     assert by_key["dusun"]["source"] == "extra"
+
+
+def test_pindah_has_single_mixed_sesi():
+    """2026-08-13 (susulan): dulu 2 sesi terpisah (Data Pemohon 1 field +
+    Alamat Asal 3 field) digabung jadi 1 sesi "mixed", pola sama seperti
+    KK's kk_header -- no_kk generic, alamat_asal/rt_asal/rw_asal extra."""
+    sesi = STAFF_SESI_SCHEMA_BY_JENIS["pindah"]
+    assert len(sesi) == 1
+    assert sesi[0]["source"] == "mixed"
+    by_key = {f["key"]: f for f in sesi[0]["fields"]}
+    assert set(by_key) == {"no_kk", "alamat_asal", "rt_asal", "rw_asal"}
+    assert "source" not in by_key["no_kk"]
+    assert by_key["alamat_asal"]["source"] == "extra"
+    assert by_key["rt_asal"]["source"] == "extra"
+    assert by_key["rw_asal"]["source"] == "extra"

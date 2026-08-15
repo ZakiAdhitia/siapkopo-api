@@ -106,6 +106,31 @@ def _block_external_resources(uri: str, _relative: str | None) -> str:
     return _BLOCKED_RESOURCE_PLACEHOLDER
 
 
+def render_html_to_pdf_bytes(html: str) -> bytes:
+    """Convert a fully-assembled HTML string to PDF bytes via xhtml2pdf,
+    with the same hardening (external-resource blocking + socket timeout)
+    as every other render path in this module.
+
+    Extracted (2026-08-13) so `SubmissionService.update_preview_html`'s
+    staff-edited HTML (Tahap 4's WYSIWYG editor, "ubah_data" only -- the one
+    letter type with no docx specimen to preserve) can be converted straight
+    to the final issued PDF without going through `_render_document`'s
+    template-assembly step again -- the input here is ALREADY a complete
+    rendered letter (staff edited what `_render_document(as_html=True)`
+    produced), not a raw body template to interpolate.
+    """
+    buffer = io.BytesIO()
+    previous_timeout = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(_RENDER_SOCKET_TIMEOUT_SECONDS)
+        result = pisa.CreatePDF(html, dest=buffer, link_callback=_block_external_resources)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
+    if result.err:  # type: ignore[union-attr]  # xhtml2pdf stubs wrong; runtime returns pisaDocument
+        raise AppException("Gagal merender PDF surat", "PDF_RENDER_ERROR", 500)
+    return buffer.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Shared letterhead template (Jinja2)
 # ---------------------------------------------------------------------------
@@ -297,20 +322,7 @@ class BaseLetterRenderer:
 
         if as_html:
             return full_html
-
-        buffer = io.BytesIO()
-        previous_timeout = socket.getdefaulttimeout()
-        try:
-            socket.setdefaulttimeout(_RENDER_SOCKET_TIMEOUT_SECONDS)
-            result = pisa.CreatePDF(
-                full_html, dest=buffer, link_callback=_block_external_resources
-            )
-        finally:
-            socket.setdefaulttimeout(previous_timeout)
-
-        if result.err:  # type: ignore[union-attr]  # xhtml2pdf stubs wrong; runtime returns pisaDocument
-            raise AppException("Gagal merender PDF surat", "PDF_RENDER_ERROR", 500)
-        return buffer.getvalue()
+        return render_html_to_pdf_bytes(full_html)
 
     # ------------------------------------------------------------------
     # Sample-data helpers (used by preview renderers)

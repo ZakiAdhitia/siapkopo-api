@@ -43,3 +43,26 @@ def test_validate_upload_accepts_allowed_mimes(monkeypatch):
     svc = FileStorageService()
     for mime in ("image/jpeg", "image/png", "application/pdf"):
         svc.validate_upload(b"x", mime)  # must not raise
+
+
+def test_validate_upload_allow_pdf_false_rejects_pdf(monkeypatch):
+    """2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md, "Extention Lampiran
+    wajib foto tidak bisa file lain"): a letter submission's REQUIRED
+    attachments must be a photo, not a PDF."""
+    monkeypatch.setattr(
+        "app.services.file_storage.get_settings",
+        lambda: type("S", (), {"max_upload_size_bytes": 100, "upload_storage_dir": "x"})(),
+    )
+    svc = FileStorageService()
+    with pytest.raises(ValidationAppError):
+        svc.validate_upload(b"x", "application/pdf", allow_pdf=False)
+
+
+def test_validate_upload_allow_pdf_false_still_accepts_images(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.file_storage.get_settings",
+        lambda: type("S", (), {"max_upload_size_bytes": 100, "upload_storage_dir": "x"})(),
+    )
+    svc = FileStorageService()
+    for mime in ("image/jpeg", "image/png"):
+        svc.validate_upload(b"x", mime, allow_pdf=False)  # must not raise

@@ -53,6 +53,6 @@ def test_submission_permissions_registered():
     # the Sekretaris Desa Position so Kepala Desa stays view-only.
     for code in ("submission:read", "submission:read_all", "submission:download"):
         assert code in ROLE_PERMISSIONS["admin"]
-    for code in ("submission:approve", "submission:reject"):
+    for code in ("submission:approve", "submission:reject", "submission:walkin"):
         assert code not in ROLE_PERMISSIONS["admin"]
-        assert code in POSITION_PERMISSIONS["sekretaris_desa"]
+        assert code not in POSITION_PERMISSIONS["sekretaris_desa"]

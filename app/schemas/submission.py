@@ -72,6 +72,13 @@ class SubmissionAnswersUpdateRequest(BaseModel):
     answers: dict = Field(default_factory=dict)
 
 
+class SubmissionPreviewHtmlUpdateRequest(BaseModel):
+    """Staff's manually-edited full letter HTML (Tahap 4 WYSIWYG editor,
+    non-docx letter types only -- see SubmissionService.update_preview_html)."""
+
+    html: str
+
+
 class SubmissionAttachmentRead(_Read):
     submission_id: UUID
     document_label: str

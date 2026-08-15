@@ -17,13 +17,6 @@ async def test_login_by_username_success(seeded_session):
 
 
 @pytest.mark.asyncio
-async def test_login_by_nik_success(seeded_session):
-    svc = AuthService(seeded_session)
-    pair = await svc.login("3516064588020003", "warga123")
-    assert pair["access_token"]
-
-
-@pytest.mark.asyncio
 async def test_login_wrong_password(seeded_session):
     svc = AuthService(seeded_session)
     with pytest.raises(UnauthorizedError):

@@ -69,9 +69,12 @@ async def test_sku_full_flow_uses_generic_block_only(seeded_session):
 
 @pytest.mark.asyncio
 async def test_pindah_and_ubah_data_unaffected_by_fase1(seeded_session):
-    """Confirms the two jenis untouched by this phase's rewiring still issue
+    """Confirms ubah_data (untouched by this phase's rewiring) still issues
     correctly, guarding against an accidental regression elsewhere in
-    _save_to_domain_master."""
+    _save_to_domain_master. Pindah itself WAS later touched (2026-08-13,
+    HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md) -- alamat_asal moved from the
+    generic staff_master_data.alamat to its own PindahExtraData sesi, so
+    this asserts the new source instead of the old one."""
     tsvc = LetterTemplateService(seeded_session)
     pindah_template = await tsvc.create({
         "code": "pindah", "name": "Surat Pindah", "icon": "moving",
@@ -87,7 +90,8 @@ async def test_pindah_and_ubah_data_unaffected_by_fase1(seeded_session):
     submission = await svc.create(
         warga, pindah_template.id, {"alamat_tujuan": "Jl. Baru No. 1"}, "3516000000000500", "Warga Pindah",
     )
-    submission.staff_master_data = {"alamat": "Kp. Asal", "no_kk": "3516000000000501"}
+    submission.staff_master_data = {"no_kk": "3516000000000501"}
+    submission.staff_extra_data = {"alamat_asal": "Kp. Asal", "rt_asal": "003", "rw_asal": "009"}
     await seeded_session.flush()
 
     await svc.approve(submission.id, staff, "ok")
@@ -98,6 +102,8 @@ async def test_pindah_and_ubah_data_unaffected_by_fase1(seeded_session):
     )).first()
     assert row.alamat_tujuan == "Jl. Baru No. 1"
     assert row.alamat_asal == "Kp. Asal"
+    assert row.rt_asal == "003"
+    assert row.rw_asal == "009"
 
     ubah_data_template = await tsvc.create({
         "code": "ubah_data", "name": "Perubahan Elemen Data Kependudukan", "icon": "edit_document",

@@ -1,15 +1,14 @@
-"""Staff daily attendance ("Absen") endpoints."""
-import io
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
 from app.db.session import get_db
 from app.dependencies.auth import CurrentUser, require_permission
 from app.dependencies.pagination import PaginationParams, pagination_params
+from app.models.attendance import AttendanceStatus
 from app.models.auth import User
 from app.schemas.attendance import AttendanceImportResult, AttendanceRead
 from app.schemas.common import Page
@@ -33,23 +32,45 @@ async def check_in(
     latitude: float = Form(...),
     longitude: float = Form(...),
     selfie: UploadFile = File(...),
+    location_name: str | None = Form(None),
+    notes: str | None = Form(None),
     session: AsyncSession = Depends(get_db),
     current: CurrentUser = Depends(require_permission("attendance:create")),
 ) -> dict:
-    """Record one "Absen" check-in: GPS coordinates + a required selfie.
-
-    Only reachable when already authenticated (the permission dependency
-    itself is the "sudah login" check) -- staff click "Absen" from inside
-    the admin panel after a normal username/password login, not instead of
-    one. Not available to Kepala Desa (position level 1) -- see
-    `POSITION_PERMISSIONS` in the RBAC registry.
-    """
+    """Record one "Absen" check-in: GPS coordinates + a required selfie."""
     content = await selfie.read()
     obj = await AttendanceService(session).check_in(
         UUID(current.id), latitude, longitude,
         content, selfie.filename or "selfie.jpg", selfie.content_type or "image/jpeg",
+        location_name=location_name, notes=notes,
     )
     return success_response(await _attendance_read(session, obj), "Absen berhasil dicatat")
+
+
+@router.post("/attendance/request-leave", response_model=Envelope[AttendanceRead])
+async def request_leave(
+    status: str = Form(...),
+    attendance_date: date = Form(...),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    location_name: str | None = Form(None),
+    notes: str | None = Form(None),
+    proof: UploadFile | None = File(None),
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("attendance:create")),
+) -> dict:
+    """Submit a leave (izin) or sick (sakit) request."""
+    st = AttendanceStatus(status)
+    proof_content = await proof.read() if proof else None
+    obj = await AttendanceService(session).request_leave(
+        UUID(current.id), st, attendance_date,
+        latitude=latitude, longitude=longitude,
+        location_name=location_name, notes=notes,
+        proof_content=proof_content,
+        proof_filename=proof.filename if proof else None,
+        proof_content_type=proof.content_type if proof else None,
+    )
+    return success_response(await _attendance_read(session, obj), "Pengajuan izin/sakit berhasil dicatat")
 
 
 @router.get("/attendance/me", response_model=Envelope[Page[AttendanceRead]])
@@ -88,14 +109,14 @@ async def download_selfie(
     attendance_id: UUID,
     session: AsyncSession = Depends(get_db),
     current: CurrentUser = Depends(require_permission("attendance:create")),
-) -> StreamingResponse:
-    """Stream a check-in's selfie photo -- own record, or any record for
+) -> Response:
+    """Return a check-in's selfie photo -- own record, or any record for
     an actor with `attendance:read_all`."""
     content, obj = await AttendanceService(session).get_selfie_file(
         attendance_id, UUID(current.id), current.permissions
     )
     content_type = "image/png" if obj.selfie_path.lower().endswith(".png") else "image/jpeg"
-    return StreamingResponse(io.BytesIO(content), media_type=content_type)
+    return Response(content=content, media_type=content_type)
 
 
 @router.post("/attendance/import", response_model=Envelope[AttendanceImportResult])
@@ -120,13 +141,13 @@ async def export_attendance_pdf(
     month: int = Query(..., ge=1, le=12),
     session: AsyncSession = Depends(get_db),
     _current: CurrentUser = Depends(require_permission("attendance:read_all")),
-) -> StreamingResponse:
+) -> Response:
     """Export one month's "Daftar Hadir" as a printable PDF (landscape,
     NO/NAMA/day-of-month grid), matching the paper roster's layout."""
     profile = await VillageProfileService(session).get()
     pdf_bytes = await AttendanceReportService(session).export_pdf(year, month, profile)
     filename = f"daftar-hadir-{year}-{month:02d}.pdf"
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes), media_type="application/pdf",
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

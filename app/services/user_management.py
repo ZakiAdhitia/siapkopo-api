@@ -109,7 +109,7 @@ class UserManagementService:
         if search:
             term = f"%{search}%"
             stmt = stmt.where(
-                or_(User.full_name.ilike(term), User.username.ilike(term), User.nik.ilike(term))
+                or_(User.full_name.ilike(term), User.username.ilike(term))
             )
         total = await self.session.scalar(select(func.count()).select_from(stmt.subquery()))
         stmt = (
@@ -138,7 +138,7 @@ class UserManagementService:
 
         role = await self._resolve_role_for_position(position)
         user = User(
-            username=username, nik=data.get("nik"), full_name=data["full_name"],
+            username=username, full_name=data["full_name"],
             hashed_password=hash_password(data["password"]), email=data["email"],
             phone=data.get("phone"), role_id=role.id, position_id=position.id,
             is_active=True, pending_approval=False,

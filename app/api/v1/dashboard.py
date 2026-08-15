@@ -1,8 +1,5 @@
 """Read-only dashboard aggregation endpoints (Bagian 10)."""
-import io
-
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
@@ -59,12 +56,12 @@ async def get_dashboard_inbox(
 async def export_dashboard_excel(
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("dashboard:read")),
-) -> StreamingResponse:
+) -> Response:
     """Export the Laporan page's data as xlsx (HASIL_UJICOBA_PERROLE.md,
     bendahara item 7)."""
     data = await DashboardService(session).export_excel()
-    return StreamingResponse(
-        io.BytesIO(data),
+    return Response(
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=laporan-pengajuan.xlsx"},
     )
@@ -74,12 +71,12 @@ async def export_dashboard_excel(
 async def export_dashboard_pdf(
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("dashboard:read")),
-) -> StreamingResponse:
+) -> Response:
     """Export the Laporan page's data as a printable PDF."""
     profile = await VillageProfileService(session).get()
     data = await DashboardService(session).export_pdf(profile)
-    return StreamingResponse(
-        io.BytesIO(data),
+    return Response(
+        content=data,
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=laporan-pengajuan.pdf"},
     )

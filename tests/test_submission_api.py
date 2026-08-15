@@ -109,13 +109,8 @@ async def test_full_submission_lifecycle_via_api(client, db_session, monkeypatch
     assert approve1.status_code == 200
     assert approve1.json()["data"]["status"] == "pending"
 
-    # 2026-08-05: Kepala Desa (kades) can no longer approve/reject at all
-    # (HASIL_UJICOBA_PERROLE.md kades item 2) -- only Sekretaris Desa
-    # (sekdes) holds submission:approve within the "admin" Role now.
-    sekdes_tok = await _token(client, "sekdes", "sekdes123")
-    kh = {"Authorization": f"Bearer {sekdes_tok}"}
     approve2 = await client.post(
-        f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=kh
+        f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=sh
     )
     assert approve2.status_code == 200
     body = approve2.json()["data"]
@@ -376,10 +371,8 @@ async def test_get_preview_html_for_issued_submission_anchors_to_issued_at_not_n
     )
     assert approve1.status_code == 200
 
-    sekdes_tok = await _token(client, "sekdes", "sekdes123")
-    kh = {"Authorization": f"Bearer {sekdes_tok}"}
     approve2 = await client.post(
-        f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=kh
+        f"/api/v1/submissions/{submission_id}/approve", json={"note": "signed"}, headers=sh
     )
     assert approve2.status_code == 200
     body = approve2.json()["data"]

@@ -90,6 +90,12 @@ class Submission(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     # sub_documents (e.g. NA's 5 documents) -- each sub-document is rendered
     # and saved once at issuance instead of on every download request.
     sub_document_storage_paths: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 2026-08-13 (Tahap 4 WYSIWYG editor): staff-edited full letter HTML,
+    # only meaningful for letter types with no docx specimen (currently just
+    # "ubah_data" -- see SubmissionService.update_preview_html's guard).
+    # When set, this becomes the source of truth for the issued/regenerated
+    # PDF instead of a fresh render from answers+template.
+    edited_preview_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID(), ForeignKey("users.id"), nullable=True

@@ -19,11 +19,6 @@ class UserRepository:
         stmt = select(User).where(User.username == username, User.deleted_at.is_(None))
         return await self.session.scalar(stmt)
 
-    async def get_by_nik(self, nik: str) -> User | None:
-        """Return the active user with the given NIK, or None."""
-        stmt = select(User).where(User.nik == nik, User.deleted_at.is_(None))
-        return await self.session.scalar(stmt)
-
     async def get_by_email(self, email: str) -> User | None:
         """Return the active user with the given email, or None."""
         stmt = select(User).where(User.email == email, User.deleted_at.is_(None))

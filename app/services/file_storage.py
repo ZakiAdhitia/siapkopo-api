@@ -26,22 +26,38 @@ _IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png"}
 # against real submitted photos once in production.
 _BLUR_VARIANCE_THRESHOLD = 500.0
 
+# On-screen previews (staff lampiran viewer: an 80x70 carousel thumbnail and
+# a ~380px-tall main preview) never need a multi-megabyte original -- guest
+# uploads can be up to 5MB (max_upload_size_bytes) and several real ones in
+# dev storage are 4-5MB PNGs. 1000px is generous headroom over what either
+# preview surface actually displays, at a fraction of the bytes.
+_PREVIEW_MAX_DIMENSION = 1000
+_PREVIEW_JPEG_QUALITY = 82
+
 
 class FileStorageService:
     """Saves/reads files on local disk under a configurable base directory."""
 
-    def validate_upload(self, content: bytes, content_type: str) -> None:
-        """Raise ValidationAppError if the upload violates size/mime rules."""
+    def validate_upload(self, content: bytes, content_type: str, allow_pdf: bool = True) -> None:
+        """Raise ValidationAppError if the upload violates size/mime rules.
+
+        `allow_pdf=False` (2026-08-13, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md
+        13/08 round, "Extention Lampiran wajib foto tidak bisa file lain")
+        narrows the allowed types to JPG/PNG only -- used for a letter
+        submission's REQUIRED attachments (always a photo of a KTP/KK/etc in
+        this system). Optional "(Bila Ada)" attachments and every other
+        caller (Attendance selfies, which intentionally accept a PDF for one
+        of their uploads) keep the default and are unaffected.
+        """
         settings = get_settings()
         if len(content) > settings.max_upload_size_bytes:
             raise ValidationAppError(
                 f"Ukuran file melebihi batas {settings.max_upload_size_bytes // (1024 * 1024)}MB"
             )
-        if content_type not in _ALLOWED_CONTENT_TYPES:
-            raise ValidationAppError(
-                f"Tipe file tidak didukung: {content_type}. "
-                "Gunakan JPG, PNG, atau PDF."
-            )
+        allowed = _IMAGE_CONTENT_TYPES if not allow_pdf else _ALLOWED_CONTENT_TYPES
+        if content_type not in allowed:
+            message = "Gunakan JPG atau PNG." if not allow_pdf else "Gunakan JPG, PNG, atau PDF."
+            raise ValidationAppError(f"Tipe file tidak didukung: {content_type}. {message}")
 
     def check_not_blurry(self, content: bytes, content_type: str, document_label: str) -> None:
         """Raise ValidationAppError if a JPEG/PNG photo looks too blurry to
@@ -82,3 +98,25 @@ class FileStorageService:
         full_path = Path(settings.upload_storage_dir) / storage_path
         async with aiofiles.open(full_path, "rb") as f:
             return await f.read()
+
+    async def read_preview(self, storage_path: str, content_type: str) -> tuple[bytes, str]:
+        """Read back a file for on-screen preview: images are downscaled to
+        at most `_PREVIEW_MAX_DIMENSION`px and re-encoded as JPEG so the
+        staff review UI never has to ship a multi-megabyte original just to
+        render a thumbnail or a small preview pane. Non-image files (PDF)
+        are returned unchanged. The original bytes stay exactly as uploaded
+        for `read()` (used by the actual "Unduh"/download flow).
+        """
+        content = await self.read(storage_path)
+        if content_type not in _IMAGE_CONTENT_TYPES:
+            return content, content_type
+        try:
+            img = Image.open(io.BytesIO(content))
+            img.thumbnail((_PREVIEW_MAX_DIMENSION, _PREVIEW_MAX_DIMENSION))
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=_PREVIEW_JPEG_QUALITY)
+            return buf.getvalue(), "image/jpeg"
+        except Exception:
+            return content, content_type

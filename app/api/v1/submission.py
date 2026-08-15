@@ -1,9 +1,7 @@
 """Submission lifecycle endpoints: create, list, attach, approve, reject, download."""
-import io
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,8 +13,8 @@ from app.models.auth import User
 from app.schemas.common import Page
 from app.schemas.submission import (
     SubmissionAnswersUpdateRequest, SubmissionApproveRequest, SubmissionAttachmentRead,
-    SubmissionCreate, SubmissionMasterDataUpdateRequest, SubmissionRead,
-    SubmissionRejectRequest, SubmissionStatusHistoryRead, SubmissionWalkinCreate,
+    SubmissionCreate, SubmissionMasterDataUpdateRequest, SubmissionPreviewHtmlUpdateRequest,
+    SubmissionRead, SubmissionRejectRequest, SubmissionStatusHistoryRead, SubmissionWalkinCreate,
 )
 from app.services.submission import SubmissionService
 
@@ -275,21 +273,54 @@ async def get_submission_master_data_schema(
     return success_response(data)
 
 
+# 2026-08-13: every binary endpoint below returns a plain `Response`, not
+# `StreamingResponse` -- even though the content is already fully-buffered
+# `bytes` (read whole from disk before the handler returns), wrapping it in
+# `StreamingResponse(io.BytesIO(...))` added a reproducible ~2s of latency
+# per request. Root cause: this app's `RequestIdMiddleware` is a
+# `BaseHTTPMiddleware`, and Starlette's `BaseHTTPMiddleware` has a
+# long-standing interaction bug with `StreamingResponse` (extra event-loop
+# round trips per chunk) -- confirmed by timing the service call alone
+# (<10ms) vs. the full HTTP round trip (~2-4s) for the exact same request.
+# `StreamingResponse` should only be used for content that's genuinely
+# generated/read incrementally; anything already in memory as `bytes`
+# belongs in a plain `Response`.
 @router.get("/submissions/{submission_id}/attachments/{attachment_id}/file")
 async def download_submission_attachment(
     submission_id: UUID,
     attachment_id: UUID,
     session: AsyncSession = Depends(get_db),
     current: CurrentUser = Depends(require_permission("submission:read")),
-) -> StreamingResponse:
-    """Stream one of a submission's uploaded supporting documents, for
+) -> Response:
+    """Return one of a submission's uploaded supporting documents, for
     staff/admin to view lampiran on the detail page."""
     from uuid import UUID as _UUID
     content, attachment = await SubmissionService(session).get_attachment_file(
         submission_id, attachment_id, _UUID(current.id), current.permissions
     )
-    return StreamingResponse(
-        io.BytesIO(content), media_type=attachment.content_type,
+    return Response(
+        content=content, media_type=attachment.content_type,
+        headers={"Content-Disposition": f'inline; filename="{attachment.original_filename}"'},
+    )
+
+
+@router.get("/submissions/{submission_id}/attachments/{attachment_id}/preview")
+async def preview_submission_attachment(
+    submission_id: UUID,
+    attachment_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(require_permission("submission:read")),
+) -> Response:
+    """Downscaled preview of a lampiran (see
+    FileStorageService.read_preview) for the staff viewer's carousel
+    thumbnail + main preview -- much lighter than the full original served
+    by /file, which stays available (unchanged) for "Unduh"."""
+    from uuid import UUID as _UUID
+    content, content_type, attachment = await SubmissionService(session).get_attachment_preview(
+        submission_id, attachment_id, _UUID(current.id), current.permissions
+    )
+    return Response(
+        content=content, media_type=content_type,
         headers={"Content-Disposition": f'inline; filename="{attachment.original_filename}"'},
     )
 
@@ -299,14 +330,14 @@ async def download_submission_pdf(
     submission_id: UUID,
     session: AsyncSession = Depends(get_db),
     current: CurrentUser = Depends(require_permission("submission:download")),
-) -> StreamingResponse:
+) -> Response:
     """Download the issued PDF for a submission."""
     from uuid import UUID as _UUID
     pdf_bytes = await SubmissionService(session).download_pdf(
         submission_id, _UUID(current.id), current.permissions
     )
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes), media_type="application/pdf",
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="surat-{submission_id}.pdf"'},
     )
 
@@ -317,14 +348,14 @@ async def download_submission_sub_doc_pdf(
     sub_doc_code: str,
     session: AsyncSession = Depends(get_db),
     current: CurrentUser = Depends(require_permission("submission:download")),
-) -> StreamingResponse:
+) -> Response:
     """Download a specific sub-document PDF for an issued submission (e.g. NA sub-documents)."""
     from uuid import UUID as _UUID
     pdf_bytes = await SubmissionService(session).download_sub_document_pdf(
         submission_id, sub_doc_code, _UUID(current.id), current.permissions
     )
-    return StreamingResponse(
-        io.BytesIO(pdf_bytes), media_type="application/pdf",
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{sub_doc_code}-{submission_id}.pdf"'},
     )
 
@@ -350,3 +381,37 @@ async def get_submission_preview_html(
     """
     html = await SubmissionService(session).get_preview_html(submission_id)
     return success_response({"html": html})
+
+
+@router.get("/submissions/{submission_id}/preview-pdf")
+async def get_submission_preview_pdf(
+    submission_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    current: CurrentUser = Depends(
+        require_any_permission("submission:approve", "submission:read_all")
+    ),
+) -> Response:
+    """Pratinjau PDF surat dalam format resmi asli (docx specimen F-1.02/
+    F-1.03/dll untuk 8 dari 9 jenis surat -- 2026-08-13, Tahap 4 redesign)
+    dengan data pengajuan yang sesungguhnya. Bukan PDF final (tidak
+    menyimpan/menandai terbit), aman dipanggil berulang kali. Sama gating-nya
+    dengan preview-html.
+    """
+    pdf_bytes = await SubmissionService(session).get_preview_pdf(submission_id)
+    return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+@router.put("/submissions/{submission_id}/preview-html", response_model=Envelope[SubmissionRead])
+async def update_submission_preview_html(
+    submission_id: UUID,
+    body: SubmissionPreviewHtmlUpdateRequest,
+    session: AsyncSession = Depends(get_db),
+    _current: CurrentUser = Depends(require_permission("submission:approve")),
+) -> dict:
+    """Staff's manually-edited full letter HTML (Tahap 4 WYSIWYG editor) --
+    becomes the source of truth for the issued/regenerated PDF. Rejected for
+    letter types rendered from a real docx specimen (SubmissionService.
+    update_preview_html's guard) -- Tahap 4's UI only shows this editor for
+    the one jenis without one ("ubah_data")."""
+    obj = await SubmissionService(session).update_preview_html(submission_id, body.html)
+    return success_response(await _submission_read(session, obj), "Surat diperbarui")

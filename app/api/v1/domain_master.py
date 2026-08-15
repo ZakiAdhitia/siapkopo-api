@@ -6,10 +6,7 @@ removed -- these codes always meant "master data" broadly, this just makes
 that explicit now that there's no more Resident to misleadingly name them
 after; see app/models/master.py's module docstring).
 """
-import io
-
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.response import Envelope, success_response
@@ -50,12 +47,12 @@ async def export_domain_master(
     jenis: str = Query(..., description="|".join(DOMAIN_MASTER_SERVICES)),
     session: AsyncSession = Depends(get_db),
     _=Depends(require_permission("master_data:export")),
-) -> StreamingResponse:
+) -> Response:
     """Export one domain master-data table (KK/domisili/NA/.../ubah_data) as
     an xlsx download (HASIL_UJICOBA_PERROLE.md, kades item 5)."""
     data = await export_domain_master_excel(session, jenis)
-    return StreamingResponse(
-        io.BytesIO(data),
+    return Response(
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=master-{jenis}.xlsx"},
     )

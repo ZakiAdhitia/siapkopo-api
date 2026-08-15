@@ -20,6 +20,19 @@ class DomisiliExtraData(BaseModel):
     masa_berlaku_bulan: str | None = None
 
 
+class PindahExtraData(BaseModel):
+    """Staff-verified "alamat asal" (the applicant's current Desa Kopo
+    address, moving FROM) for a Pindah submission -- mirrors DomisiliExtraData's
+    alamat_asal shape but without the geo chain (kel_desa/kec/kab_kota/
+    provinsi), since Pindah's asal is always within Desa Kopo by definition
+    (only a resident can file this letter), unlike Domisili's asal which may
+    legitimately be anywhere in Indonesia."""
+
+    alamat_asal: str | None = None
+    rt_asal: str | None = None
+    rw_asal: str | None = None
+
+
 class KematianExtraData(BaseModel):
     jk: str | None = None
     tempat_lahir: str | None = None
@@ -29,14 +42,6 @@ class KematianExtraData(BaseModel):
     alamat: str | None = None
     rt: str | None = None
     rw: str | None = None
-
-
-class _KelahiranAnak(BaseModel):
-    jk: str | None = None
-    tempat_lahir: str | None = None
-    tanggal_lahir: date | None = None
-    jam_lahir: str | None = None
-    anak_ke: str | None = None
 
 
 class _OrangTuaBlock(BaseModel):
@@ -51,7 +56,12 @@ class _OrangTuaBlock(BaseModel):
 
 
 class KelahiranExtraData(BaseModel):
-    anak: _KelahiranAnak = _KelahiranAnak()
+    """The child's own attributes (JK/tempat lahir/tanggal lahir/jam lahir/
+    anak-ke) are citizen-input, not staff-verified -- there's no photo of a
+    newborn to check them against (see the Kelahiran template's own field
+    comments in letter_template_data.py). Only the parents' TTL/pekerjaan/
+    alamat, verifiable from their KTP/KK photos, stay staff-side here."""
+
     ayah: _OrangTuaBlock = _OrangTuaBlock()
     ibu: _OrangTuaBlock = _OrangTuaBlock()
 
@@ -143,6 +153,6 @@ STAFF_EXTRA_DATA_SCHEMA_BY_JENIS: dict[str, type[BaseModel] | None] = {
     "kk": KKExtraData,
     "sku": None,
     "uhc": None,
-    "pindah": None,
+    "pindah": PindahExtraData,
     "ubah_data": None,
 }

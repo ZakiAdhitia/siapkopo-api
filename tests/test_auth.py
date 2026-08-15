@@ -43,22 +43,22 @@ async def test_forgot_password_reset_flow(client):
 
     request-otp/verify-otp are gone, but the dev_code echo behavior they used
     to cover lives on in forgot-password: request a reset code for the demo
-    "warga" account (by NIK), use it to set a new password, then confirm the
+    "warga" account (by username), use it to set a new password, then confirm the
     new password actually logs in.
     """
     req = await client.post("/api/v1/auth/forgot-password",
-                            json={"identifier": "3516064588020003"})
+                            json={"identifier": "warga"})
     assert req.status_code == 200
     code = req.json()["data"]["dev_code"]
     assert code
 
     reset = await client.post("/api/v1/auth/reset-password", json={
-        "identifier": "3516064588020003", "code": code, "new_password": "newwarga123",
+        "identifier": "warga", "code": code, "new_password": "newwarga123",
     })
     assert reset.status_code == 200
 
     login = await client.post("/api/v1/auth/login",
-                              json={"identifier": "3516064588020003", "password": "newwarga123"})
+                              json={"identifier": "warga", "password": "newwarga123"})
     assert login.status_code == 200
     assert login.json()["data"]["access_token"]
 

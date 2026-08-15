@@ -149,7 +149,10 @@ REQUIRED_STAFF_FIELDS_BY_JENIS: dict[str, list[str]] = {
     "sku": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
     "na": [],  # subject is the calon, not necessarily the same identity fields -- generic block not needed (extra-data sesi covers it, see REQUIRED_EXTRA_FIELDS_BY_JENIS)
     "uhc": ["alamat", "rt_id", "jk", "tempat_lahir", "tanggal_lahir", "pekerjaan", "status_kawin"],
-    "pindah": ["alamat", "no_kk"],
+    # 2026-08-13: "alamat" dropped -- Pindah's alamat asal now comes from
+    # its own dedicated staff_extra_data sesi (PindahExtraData, below in
+    # REQUIRED_EXTRA_FIELDS_BY_JENIS), not the generic identity block.
+    "pindah": ["no_kk"],
     "kk": ["alamat", "rt_id", "no_kk"],  # member #1 now sourced from staff_extra_data anggota, not these generic keys
     "ubah_data": ["alamat", "no_kk"],
 }
@@ -166,7 +169,10 @@ REQUIRED_EXTRA_FIELDS_BY_JENIS: dict[str, list[str]] = {
     ],
     "kematian": ["jk", "pekerjaan", "alamat", "rt", "rw"],
     "kelahiran": [
-        "anak.jk", "anak.tempat_lahir", "anak.tanggal_lahir", "anak.jam_lahir", "anak.anak_ke",
+        # The child's own attributes (jk/tempat/tanggal/jam lahir/anak-ke)
+        # are citizen-input TemplateFields now, not staff_extra_data -- see
+        # letter_template_data.py's "lahir" entry -- so they're required via
+        # the normal TemplateField.is_required check, not here.
         "ayah.tempat_lahir", "ayah.tanggal_lahir", "ayah.pekerjaan", "ayah.alamat", "ayah.rt", "ayah.rw",
         "ibu.tempat_lahir", "ibu.tanggal_lahir", "ibu.pekerjaan", "ibu.alamat", "ibu.rt", "ibu.rw",
     ],
@@ -180,7 +186,12 @@ REQUIRED_EXTRA_FIELDS_BY_JENIS: dict[str, list[str]] = {
         "csi.bin_binti", "csi.jk", "csi.ttl", "csi.agama", "csi.pekerjaan", "csi.alamat",
         "csi.rt", "csi.rw", "csi.kel_desa", "csi.kec", "csi.kab_kota", "csi.provinsi", "csi.shdk",
     ],
-    "kk": ["nama_kk", "dusun"],
+    # 2026-08-13 (user correction): "dusun" dropped -- Tahap 3's own field
+    # never showed it as required (no asterisk, staff could always click
+    # "Lanjut" past it blank), but this list silently blocked Approve on it
+    # anyway. Dusun may legitimately be blank (not every alamat has one).
+    "kk": ["nama_kk"],
+    "pindah": ["alamat_asal", "rt_asal", "rw_asal"],
 }
 
 EXTRA_FIELD_LABELS: dict[str, str] = {
@@ -190,9 +201,6 @@ EXTRA_FIELD_LABELS: dict[str, str] = {
     "provinsi_asal": "Provinsi Asal (Data Master)", "masa_berlaku_bulan": "Masa Berlaku (Data Master)",
     "jk": "Jenis Kelamin (Data Master)", "pekerjaan": "Pekerjaan (Data Master)",
     "alamat": "Alamat (Data Master)", "rt": "RT (Data Master)", "rw": "RW (Data Master)",
-    "anak.jk": "Jenis Kelamin Anak (Data Master)", "anak.tempat_lahir": "Tempat Lahir Anak (Data Master)",
-    "anak.tanggal_lahir": "Tanggal Lahir Anak (Data Master)", "anak.jam_lahir": "Jam Lahir Anak (Data Master)",
-    "anak.anak_ke": "Anak Ke- (Data Master)",
     "ayah.tempat_lahir": "Tempat Lahir Ayah (Data Master)", "ayah.tanggal_lahir": "Tanggal Lahir Ayah (Data Master)",
     "ayah.pekerjaan": "Pekerjaan Ayah (Data Master)", "ayah.alamat": "Alamat Ayah (Data Master)",
     "ayah.rt": "RT Ayah (Data Master)", "ayah.rw": "RW Ayah (Data Master)",
@@ -217,7 +225,7 @@ EXTRA_FIELD_LABELS: dict[str, str] = {
     "csi.kel_desa": "Desa/Kel Calon Pasangan (Data Master)", "csi.kec": "Kecamatan Calon Pasangan (Data Master)",
     "csi.kab_kota": "Kabupaten/Kota Calon Pasangan (Data Master)",
     "csi.provinsi": "Provinsi Calon Pasangan (Data Master)", "csi.shdk": "SHDK Calon Pasangan (Data Master)",
-    "nama_kk": "Nama Kepala Keluarga (Data Master)", "dusun": "Dusun (Data Master)",
+    "nama_kk": "Nama Kepala Keluarga (Data Master)",
 }
 
 
@@ -258,13 +266,15 @@ STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
             {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "pekerjaan", "label": "Pekerjaan"},
             {"key": "status_kawin", "label": "Status Kawin"},
         ]},
+        # "Berlaku" merged into this sesi (2026-08-13, user instruction) --
+        # both are `source: "extra"` (flat Submission.staff_extra_data
+        # top-level keys), so this is a pure Tahap 3 UI grouping change, no
+        # storage/save-path change needed.
         {"key": "alamat_asal", "label": "Alamat Asal", "source": "extra", "fields": [
             {"key": "alamat_asal", "label": "Alamat Asal"}, {"key": "rt_asal", "label": "RT Asal"},
             {"key": "rw_asal", "label": "RW Asal"}, {"key": "kel_desa_asal", "label": "Desa/Kelurahan Asal"},
             {"key": "kec_asal", "label": "Kecamatan Asal"}, {"key": "kab_kota_asal", "label": "Kabupaten/Kota Asal"},
             {"key": "provinsi_asal", "label": "Provinsi Asal"},
-        ]},
-        {"key": "berlaku", "label": "Berlaku", "source": "extra", "fields": [
             {"key": "masa_berlaku_bulan", "label": "Masa Berlaku (Bulan)"},
         ]},
     ],
@@ -277,11 +287,9 @@ STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
         ]},
     ],
     "kelahiran": [
-        {"key": "anak", "label": "Data Anak", "source": "extra_nested", "fields": [
-            {"key": "jk", "label": "Jenis Kelamin"}, {"key": "tempat_lahir", "label": "Tempat Lahir"},
-            {"key": "tanggal_lahir", "label": "Tanggal Lahir"}, {"key": "jam_lahir", "label": "Jam Lahir"},
-            {"key": "anak_ke", "label": "Anak Ke-"},
-        ]},
+        # Data Anak sesi removed (2026-08-13, user correction): the child's
+        # own attributes are citizen-input now (Tahap 2), not a staff sesi --
+        # see letter_template_data.py's "lahir" entry.
         {"key": "ayah", "label": "Data Ayah", "source": "extra_nested", "fields": [
             {"key": "tempat_lahir", "label": "Tempat Lahir"}, {"key": "tanggal_lahir", "label": "Tanggal Lahir"},
             {"key": "pekerjaan", "label": "Pekerjaan"}, {"key": "alamat", "label": "Alamat"},
@@ -343,23 +351,56 @@ STAFF_SESI_SCHEMA_BY_JENIS: dict[str, list[dict]] = {
     ],
     "sku": [_GENERIC_IDENTITY_SESI],
     "uhc": [_GENERIC_IDENTITY_SESI],
-    "pindah": [{"key": "pemohon", "label": "Data Pemohon", "source": "generic", "fields": [
-        {"key": "alamat", "label": "Alamat Asal"}, {"key": "no_kk", "label": "No. KK"},
-    ]}],
+    # 2026-08-13 (susulan): satu sesi gabungan, bukan 2 -- sesi "Data Pemohon"
+    # sebelumnya cuma berisi 1 field (No. KK) sehingga terasa seperti langkah
+    # kosong. Digabung jadi 1 sesi "mixed" (pola sama seperti KK's kk_header
+    # di bawah): no_kk tetap generic (staff_master_data), alamat_asal/rt_asal/
+    # rw_asal per-field "source": "extra" (staff_extra_data/PindahExtraData).
+    "pindah": [
+        {"key": "pemohon", "label": "Data Pemohon", "source": "mixed", "fields": [
+            {"key": "no_kk", "label": "No. KK"},
+            {"key": "alamat_asal", "label": "Alamat Asal", "source": "extra"},
+            {"key": "rt_asal", "label": "RT Asal", "source": "extra"},
+            {"key": "rw_asal", "label": "RW Asal", "source": "extra"},
+        ]},
+    ],
     "ubah_data": [{"key": "pemohon", "label": "Data Pemohon", "source": "generic", "fields": [
         {"key": "alamat", "label": "Alamat"}, {"key": "no_kk", "label": "No. KK"},
     ]}],
 }
 
 
-def _flatten_extra_data(jenis: str, extra: dict) -> dict:
+def _strip_shdk_code(value: str | None) -> str | None:
+    """SHDK is entered via a coded dropdown ("02 - Suami", mirroring the
+    national population-registry SHDK codes) for a fast, typo-proof staff
+    UI (SesiFieldGrid.jsx) -- but the numeric code is a UI affordance only.
+    Domain master data (and the printed surat) should read the plain
+    descriptive text, same as a real KK/NA document. Falls through
+    unchanged if the value doesn't have the "NN - " shape (e.g. legacy
+    free-typed data from before this field became a dropdown).
+    """
+    if not value:
+        return value
+    _, sep, label = value.partition(" - ")
+    return label if sep else value
+
+
+def _flatten_extra_data(jenis: str, extra: dict, answers: dict | None = None) -> dict:
     """Flatten Submission.staff_extra_data's nested per-jenis shape back
     into the flat field-key names the docx/HTML letter templates and
     SubmissionService._save_to_domain_master already expect -- these were
     previously supplied by the citizen's own `answers` before Fase 1 of
     ALUR_REVIEW_INPUT_MASTER.md moved them to staff sesi input. Called from
     SubmissionService.build_applicant_snapshot so every existing consumer of
-    the `applicant` dict picks these up with zero further changes."""
+    the `applicant` dict picks these up with zero further changes.
+
+    `answers` (2026-08-13): Kelahiran's child-attribute fields moved back to
+    citizen-input (`jk_anak`/`tempat_lahir_anak`/`tanggal_lahir_anak`/
+    `jam_lahir_anak`/`anak_ke` TemplateFields) -- flattened here too, under
+    the SAME target keys the docx template already expects
+    (gender_anak/tgl_lahir_anak/etc.), so no template/consumer changes
+    needed elsewhere. Optional and unused by every other jenis branch."""
+    answers = answers or {}
     if jenis == "domisili":
         return {
             "alamat_asal": extra.get("alamat_asal"), "rt_asal": extra.get("rt_asal"),
@@ -375,11 +416,11 @@ def _flatten_extra_data(jenis: str, extra: dict) -> dict:
             "rt_almarhum": extra.get("rt"), "rw_almarhum": extra.get("rw"),
         }
     if jenis == "kelahiran":
-        anak, ayah, ibu = extra.get("anak") or {}, extra.get("ayah") or {}, extra.get("ibu") or {}
+        ayah, ibu = extra.get("ayah") or {}, extra.get("ibu") or {}
         return {
-            "gender_anak": anak.get("jk"), "tempat_lahir_anak": anak.get("tempat_lahir"),
-            "tgl_lahir_anak": anak.get("tanggal_lahir"), "jam_lahir_anak": anak.get("jam_lahir"),
-            "anak_ke": anak.get("anak_ke"),
+            "gender_anak": answers.get("jk_anak"), "tempat_lahir_anak": answers.get("tempat_lahir_anak"),
+            "tgl_lahir_anak": answers.get("tanggal_lahir_anak"), "jam_lahir_anak": answers.get("jam_lahir_anak"),
+            "anak_ke": answers.get("anak_ke"),
             "tempat_lahir_ayah": ayah.get("tempat_lahir"), "tanggal_lahir_ayah": ayah.get("tanggal_lahir"),
             "pekerjaan_ayah": ayah.get("pekerjaan"), "alamat_ayah": ayah.get("alamat"),
             "rt_ayah": ayah.get("rt"), "rw_ayah": ayah.get("rw"),
@@ -409,10 +450,15 @@ def _flatten_extra_data(jenis: str, extra: dict) -> dict:
             "rt_pasangan": csi.get("rt"), "rw_pasangan": csi.get("rw"),
             "kel_desa_pasangan": csi.get("kel_desa"), "kec_pasangan": csi.get("kec"),
             "kab_kota_pasangan": csi.get("kab_kota"), "provinsi_pasangan": csi.get("provinsi"),
-            "shdk": csi.get("shdk"),
+            "shdk": _strip_shdk_code(csi.get("shdk")),
         }
     if jenis == "kk":
         return {"nama_kk": extra.get("nama_kk"), "dusun": extra.get("dusun")}
+    if jenis == "pindah":
+        return {
+            "alamat_asal": extra.get("alamat_asal"), "rt_asal": extra.get("rt_asal"),
+            "rw_asal": extra.get("rw_asal"),
+        }
     return {}
 
 

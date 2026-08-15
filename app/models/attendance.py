@@ -26,23 +26,7 @@ def _values_callable(enum_cls: type[enum.Enum]) -> list[str]:
 
 
 class Attendance(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """One staff attendance record for one calendar day.
-
-    Two ways a row is created:
-    - Live check-in (the "Absen" button): `attendance_date` is today,
-      `status` is always HADIR, `latitude`/`longitude`/`selfie_path` are
-      always populated (GPS + selfie proof).
-    - Excel import (digitizing a paper "Daftar Hadir" roster, or backfilling
-      a month the digital check-in wasn't used yet): `attendance_date` is
-      whatever day column the cell came from, `status` reflects the I/S/A
-      code (or HADIR for a plain signature mark), and there is no GPS/selfie
-      to attach -- those three columns stay null for imported rows.
-
-    `created_at` (TimestampMixin) is when the ROW was written, which for a
-    live check-in coincides with `attendance_date` but for an import (or a
-    correction) does not -- `attendance_date` is the one that means
-    "which day is this attendance FOR".
-    """
+    """One staff attendance record for one calendar day."""
 
     __tablename__ = "attendance"
 
@@ -54,4 +38,6 @@ class Attendance(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
     )
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
     selfie_path: Mapped[str | None] = mapped_column(String(500), nullable=True)

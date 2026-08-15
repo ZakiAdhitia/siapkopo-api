@@ -17,6 +17,7 @@ class FieldType(str, enum.Enum):
     SELECT = "select"
     DATE = "date"
     TEXTAREA = "textarea"
+    TIME = "time"
 
 
 class LetterOutputCategory(str, enum.Enum):

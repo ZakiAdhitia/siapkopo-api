@@ -19,10 +19,10 @@ class AttendanceRead(BaseModel):
     status: str
     latitude: float | None = None
     longitude: float | None = None
+    location_name: str | None = None
+    notes: str | None = None
     selfie_path: str | None = None
     created_at: datetime
-    # Populated by the router (not the ORM object): who checked in, for the
-    # admin "all attendance" list -- avoids a second lookup on the client.
     user_full_name: str | None = None
 
 

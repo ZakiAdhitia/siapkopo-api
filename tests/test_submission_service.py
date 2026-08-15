@@ -1,3 +1,4 @@
+import io
 import re
 from datetime import date
 
@@ -6,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.exceptions import ForbiddenError, ValidationAppError
 from app.models.auth import Role, User
-from app.models.submission import Submission
+from app.models.submission import Submission, SubmissionStatus
 from app.services.letter_template import LetterTemplateService
 from app.services.submission import SubmissionService
 
@@ -78,6 +79,56 @@ async def test_create_succeeds_with_valid_answers(seeded_session):
 
     got = await svc.get_or_404(obj.id)
     assert got.answers["keperluan"] == "Bank"
+
+
+async def _make_template_with_death_date_field(session):
+    """A "meninggal"-keyed date field -- Kematian's tgl_meninggal shape,
+    tested generically here rather than against the seeded template."""
+    svc = LetterTemplateService(session)
+    template = await svc.create({
+        "code": "mati", "name": "Ket. Kematian", "icon": "sentiment_very_dissatisfied",
+        "color_bg": "#EEF1EE", "color_fg": "#5a6b62",
+        "numbering_prefix": "472", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ tgl_meninggal }}</p>",
+    })
+    await svc.add_field(template.id, {
+        "field_key": "tgl_meninggal", "label": "Tanggal Meninggal", "field_type": "date", "is_required": True,
+    })
+    return template
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_future_death_date(seeded_session):
+    """2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md): tgl_meninggal
+    can't be in the future."""
+    from datetime import date, timedelta
+
+    template = await _make_template_with_death_date_field(seeded_session)
+    user = await _make_warga_user(seeded_session, "warga_meninggal_future")
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+    svc = SubmissionService(seeded_session)
+    with pytest.raises(ValidationAppError):
+        await svc.create(
+            user, template.id, {"tgl_meninggal": tomorrow}, "3516000000000700", "Warga Test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_todays_death_date(seeded_session):
+    """Unlike birth-date fields (which reject today), a death date filed the
+    same day is normal and must be accepted."""
+    from datetime import date
+
+    template = await _make_template_with_death_date_field(seeded_session)
+    user = await _make_warga_user(seeded_session, "warga_meninggal_today")
+
+    svc = SubmissionService(seeded_session)
+    obj = await svc.create(
+        user, template.id, {"tgl_meninggal": date.today().isoformat()},
+        "3516000000000701", "Warga Test",
+    )
+    assert obj.answers["tgl_meninggal"] == date.today().isoformat()
 
 
 @pytest.mark.asyncio
@@ -382,9 +433,10 @@ async def test_create_walkin_blocks_jenis_needing_staff_extra_data(seeded_sessio
     _issue() directly, never going through the staff_extra_data
     completeness gate that approve() enforces. Since Task 14 moved fields
     like domisili's masa_berlaku_bulan out of citizen answers, walk-ins for
-    domisili/lahir/mati/na/kk could silently issue letters with missing
-    data -- Mode Loket has no UI yet to collect staff_extra_data. These 5
-    jenis are now blocked from Mode Loket with a clear error instead."""
+    domisili/lahir/mati/na/kk (and pindah, since 2026-08-13 -- see
+    test_create_walkin_now_blocks_pindah_too) could silently issue letters
+    with missing data -- Mode Loket has no UI yet to collect staff_extra_data.
+    These jenis are now blocked from Mode Loket with a clear error instead."""
     tsvc = LetterTemplateService(seeded_session)
     template = await tsvc.create({
         "code": "domisili", "name": "Surat Domisili", "icon": "home_pin",
@@ -412,6 +464,35 @@ async def test_create_walkin_blocks_jenis_needing_staff_extra_data(seeded_sessio
     # Blocked before any submission row is created.
     after_count = len((await seeded_session.scalars(select(Submission))).all())
     assert after_count == before_count
+
+
+@pytest.mark.asyncio
+async def test_create_walkin_now_blocks_pindah_too(seeded_session):
+    """2026-08-13: pindah joined the staff_extra_data jenis (PindahExtraData,
+    alamat asal) -- Mode Loket must now refuse it too, same as its 5 siblings,
+    until it grows a UI to collect that sesi."""
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "pindah", "name": "Surat Pindah", "icon": "moving",
+        "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "475", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    })
+    await tsvc.add_field(template.id, {
+        "field_key": "alamat_tujuan", "label": "Alamat Tujuan", "field_type": "text", "is_required": True,
+    })
+    roles = {r.name: r for r in (await seeded_session.scalars(select(Role))).all()}
+    staff = User(username="staff_walkin_pindah_blocked", full_name="Staff", hashed_password="x",
+                 role_id=roles["staff"].id)
+    seeded_session.add(staff)
+    await seeded_session.flush()
+
+    svc = SubmissionService(seeded_session)
+    with pytest.raises(ValidationAppError):
+        await svc.create_walkin(
+            staff, template.id, "3516000000000702", "Warga Loket Pindah",
+            {"alamat_tujuan": "Jl. Loket"},
+        )
 
 
 @pytest.mark.asyncio
@@ -544,6 +625,41 @@ async def test_get_missing_staff_fields_kk_requires_one_complete_anggota(seeded_
     await seeded_session.flush()
     still_missing = await svc.get_missing_staff_fields(submission)
     assert "Data Anggota Keluarga (minimal 1 anggota)" not in still_missing
+
+
+@pytest.mark.asyncio
+async def test_pindah_approve_blocked_until_alamat_asal_filled(seeded_session):
+    """2026-08-13 (HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md): alamat_asal/
+    rt_asal/rw_asal moved from citizen answers to staff's PindahExtraData
+    sesi -- Approve must stay blocked until staff fills them in, same
+    pattern as Domisili's own alamat_asal sesi."""
+    tsvc = LetterTemplateService(seeded_session)
+    template = await tsvc.create({
+        "code": "pindah", "name": "Surat Pindah", "icon": "moving",
+        "color_bg": "#EAF6FF", "color_fg": "#2B76C9",
+        "numbering_prefix": "475", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }}</p>",
+    })
+    user = await _make_warga_user(seeded_session, "warga_pindah_missing")
+    svc = SubmissionService(seeded_session)
+    submission = await svc.create(user, template.id, {}, "3516000000000994", "Warga Pindah")
+    submission.staff_master_data = {"no_kk": "3516000000000001"}
+    await seeded_session.flush()
+
+    missing = await svc.get_missing_staff_fields(submission)
+    assert "Alamat Asal (Data Master)" in missing
+    assert "RT Asal (Data Master)" in missing
+    assert "RW Asal (Data Master)" in missing
+    with pytest.raises(ValidationAppError):
+        await svc.approve(submission.id, user, "ok")
+
+    await svc.update_extra_data(submission.id, {
+        "alamat_asal": "Kp. Asal", "rt_asal": "003", "rw_asal": "009",
+    })
+    still_missing = await svc.get_missing_staff_fields(submission)
+    assert still_missing == []
+    advanced = await svc.approve(submission.id, user, "ok")
+    assert advanced.current_step_index == 1
 
 
 async def _approve_to_issued(svc, submission, staff_user):
@@ -909,3 +1025,90 @@ async def test_seed_mati_no_longer_asks_jk_or_pekerjaan_almarhum(seeded_session)
     assert "pekerjaan_almarhum" not in keys
     assert "nama_almarhum" in keys  # anchor, stays
     assert "sebab_meninggal" in keys  # event knowledge, stays
+
+
+# ─── Tahap 4 real-PDF preview + WYSIWYG editor scope (2026-08-13) ──────────
+
+@pytest.mark.asyncio
+async def test_get_preview_pdf_renders_real_docx(seeded_session):
+    """"domisili" is docx-backed (DocxLetterRenderer) -- get_preview_pdf must
+    return real PDF bytes from the actual Word specimen, not the separate
+    always-HTML get_preview_html() rendering."""
+    svc, submission, _users = await _setup_pending_submission(seeded_session)
+    pdf_bytes = await svc.get_preview_pdf(submission.id)
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+@pytest.mark.asyncio
+async def test_update_preview_html_rejected_for_docx_backed_jenis(seeded_session):
+    """Staff must not be able to override a docx-backed letter's official
+    format (F-1.02/F-1.03/etc) with a plain HTML edit."""
+    svc, submission, _users = await _setup_pending_submission(seeded_session)
+    with pytest.raises(ValidationAppError):
+        await svc.update_preview_html(submission.id, "<p>edited</p>")
+
+
+async def _make_ubah_data_submission(session) -> tuple[SubmissionService, Submission, User]:
+    """"ubah_data" has no docx specimen (DocxLetterRenderer doesn't support
+    it) and is hidden from normal creation paths (_HIDDEN_TEMPLATE_CODES) --
+    built directly, same pattern as test_fase1_end_to_end.py's ubah_data
+    coverage."""
+    tsvc = LetterTemplateService(session)
+    template = await tsvc.create({
+        "code": "ubah_data", "name": "Perubahan Elemen Data Kependudukan", "icon": "edit_document",
+        "color_bg": "#FDF2E9", "color_fg": "#C6690B",
+        "numbering_prefix": "474.1", "numbering_pattern": "{prefix}/{seq}",
+        "pdf_body_template": "<p>{{ nama }} - {{ data_baru }}</p>",
+    })
+    for key, label in [("elemen_diubah", "Elemen"), ("data_lama", "Data Lama"), ("data_baru", "Data Baru")]:
+        await tsvc.add_field(template.id, {
+            "field_key": key, "label": label, "field_type": "text", "is_required": True,
+        })
+    warga = await _make_warga_user(session, "warga_ubah_data_preview")
+    submission = Submission(
+        template_id=template.id,
+        submitted_by_user_id=warga.id,
+        answers={"elemen_diubah": "Pekerjaan", "data_lama": "Petani", "data_baru": "Wiraswasta"},
+        applicant_nik="3516000000000710", applicant_nama="Warga Ubah Data Preview",
+        status=SubmissionStatus.PENDING, current_step_index=0,
+    )
+    session.add(submission)
+    await session.flush()
+    submission.staff_master_data = {"alamat": "Kp. Ubah Data", "no_kk": "3516000000000711"}
+    await session.flush()
+    return SubmissionService(session), submission, warga
+
+
+@pytest.mark.asyncio
+async def test_update_preview_html_succeeds_for_non_docx_jenis(seeded_session):
+    svc, submission, _warga = await _make_ubah_data_submission(seeded_session)
+    updated = await svc.update_preview_html(submission.id, "<p>Edited by staff</p>")
+    assert updated.edited_preview_html == "<p>Edited by staff</p>"
+    # Reopening the preview must show the saved edit, not a fresh re-render.
+    assert await svc.get_preview_html(submission.id) == "<p>Edited by staff</p>"
+
+
+@pytest.mark.asyncio
+async def test_issue_uses_edited_preview_html_when_set(seeded_session):
+    """The staff-edited HTML becomes the actual issued PDF's content for a
+    non-docx letter type, not a fresh render from answers+template."""
+    import pypdf
+
+    svc, submission, warga = await _make_ubah_data_submission(seeded_session)
+    marker = "STAFF EDITED MARKER TEXT 12345"
+    await svc.update_preview_html(submission.id, f"<html><body><p>{marker}</p></body></html>")
+
+    roles = {r.name: r for r in (await seeded_session.scalars(select(Role))).all()}
+    staff = User(username="staff_ubah_data_preview", full_name="Staff", hashed_password="x",
+                 role_id=roles["staff"].id)
+    seeded_session.add(staff)
+    await seeded_session.flush()
+
+    await svc.approve(submission.id, staff, "ok")
+    issued = await svc.approve(submission.id, staff, "signed")
+    assert issued.status.value == "issued"
+
+    pdf_bytes = await svc.download_pdf(issued.id, warga.id, ["submission:download"])
+    reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+    text = "".join(page.extract_text() or "" for page in reader.pages)
+    assert marker in text

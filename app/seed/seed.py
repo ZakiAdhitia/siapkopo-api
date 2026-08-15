@@ -77,14 +77,14 @@ async def seed_rbac(session: AsyncSession) -> None:
         if user is None:
             # Create new user
             session.add(User(
-                username=acc["username"], nik=acc["nik"], full_name=acc["full_name"],
+                username=acc["username"], full_name=acc["full_name"],
                 hashed_password=hash_password(acc["password"]), email=acc["email"],
                 role_id=existing_roles[acc["role"]].id, position_id=position_id,
                 is_active=True,
             ))
         else:
             # Update existing user with new role/position/email. Deliberately
-            # NOT touching hashed_password/nik/full_name here: a re-seed must
+            # NOT touching hashed_password/full_name here: a re-seed must
             # never reset a password someone changed, nor rename/reactivate
             # a user outside the demo-data contract -- only role/position/
             # email are considered "managed" by DEMO_ACCOUNTS on update.
@@ -181,8 +181,13 @@ async def sync_letter_template_fields(session: AsyncSession) -> None:
     by `field_key` match, and adds any field newly present in the source
     that an existing template doesn't have yet. Never deletes a field, so
     it can't orphan an existing submission's `answers`. Also refreshes
-    `pdf_body_template` so a rewritten letter body takes effect without a
-    destructive reseed.
+    `pdf_body_template` and (2026-08-13, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md
+    round) the template-level attachment configuration
+    (required_documents/optional_documents/category_field_key/
+    required_documents_by_category) -- these used to be silently ignored on
+    re-seed (only set once by `seed_letter_templates` at template creation),
+    so editing e.g. NA's `_NA_WAJIB` list in source never reached an
+    already-seeded dev DB until now.
     """
     updated_fields = 0
     added_fields = 0
@@ -193,8 +198,23 @@ async def sync_letter_template_fields(session: AsyncSession) -> None:
         )
         if template is None:
             continue
+        template_changed = False
         if template.pdf_body_template != entry["pdf_body_template"]:
             template.pdf_body_template = entry["pdf_body_template"]
+            template_changed = True
+        entry_optional_documents = entry.get("optional_documents", [])
+        entry_category_field_key = entry.get("category_field_key")
+        entry_required_documents_by_category = entry.get("required_documents_by_category")
+        if (template.required_documents, template.optional_documents,
+                template.category_field_key, template.required_documents_by_category) != (
+                entry["required_documents"], entry_optional_documents,
+                entry_category_field_key, entry_required_documents_by_category):
+            template.required_documents = entry["required_documents"]
+            template.optional_documents = entry_optional_documents
+            template.category_field_key = entry_category_field_key
+            template.required_documents_by_category = entry_required_documents_by_category
+            template_changed = True
+        if template_changed:
             updated_templates += 1
         existing_fields = {
             f.field_key: f for f in (await session.scalars(
@@ -214,10 +234,11 @@ async def sync_letter_template_fields(session: AsyncSession) -> None:
                 ))
                 added_fields += 1
                 continue
-            if (existing.label, existing.is_required, existing.validation_rules,
+            if (existing.label, existing.field_type, existing.is_required, existing.validation_rules,
                     existing.options, existing.placeholder, existing.is_staff_only) \
-                    != (label, required, rules, options, placeholder, is_staff_only):
+                    != (label, FieldType(ftype), required, rules, options, placeholder, is_staff_only):
                 existing.label = label
+                existing.field_type = FieldType(ftype)
                 existing.is_required = required
                 existing.validation_rules = rules
                 existing.options = options

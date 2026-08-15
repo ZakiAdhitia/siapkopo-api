@@ -113,6 +113,13 @@ class LetterTemplateRead(_Read):
     output_category: LetterOutputCategory
     post_issuance_note: str | None = None
     sub_documents: list[dict] | None = None
+    # 2026-08-13 (Tahap 4 preview redesign): populated by the router
+    # (DocxLetterRenderer.supports(code)), same pattern as SubmissionRead's
+    # applicant_* fields -- lets the frontend decide whether Tahap 4 shows
+    # the real docx-rendered PDF (view-only, official F-1.02/F-1.03/etc
+    # format) or the editable HTML preview (the one letter type with no
+    # docx specimen, "ubah_data").
+    uses_docx_template: bool = False
 
 
 class ReorderFieldsRequest(BaseModel):

@@ -15,6 +15,7 @@ from __future__ import annotations
 from app.models.letter_template import LetterTemplate, TemplateField
 from app.models.master import VillageProfile
 from app.services.file_storage import FileStorageService
+from app.services.template_render._base import render_html_to_pdf_bytes
 from app.services.template_render.service import TemplateRenderService
 
 
@@ -24,6 +25,19 @@ class TemplateFileService:
     def __init__(self) -> None:
         self._renderer = TemplateRenderService()
         self._storage = FileStorageService()
+
+    async def render_and_save_from_html(self, *, html: str, template_code: str) -> tuple[bytes, str]:
+        """Convert an already-rendered HTML string (staff-edited via Tahap
+        4's WYSIWYG editor, `Submission.edited_preview_html`) straight to
+        PDF and save it, bypassing the normal template+data render step.
+
+        Returns (pdf_bytes, storage_path). Only meaningful for letter types
+        with no docx specimen (currently just "ubah_data") -- see
+        `SubmissionService.update_preview_html`'s guard.
+        """
+        pdf_bytes = render_html_to_pdf_bytes(html)
+        storage_path = await self._storage.save(pdf_bytes, f"{template_code}.pdf", subdir="issued")
+        return pdf_bytes, storage_path
 
     async def render_and_save(
         self, *, template: LetterTemplate, fields: list[TemplateField], profile: VillageProfile,

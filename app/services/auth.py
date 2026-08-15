@@ -73,7 +73,7 @@ class AuthService:
         }
 
     async def login(self, identifier: str, password: str) -> dict:
-        """Authenticate by username, NIK, email, or phone, all matched against `password`."""
+        """Authenticate by username, email, or phone, all matched against `password`."""
         clean = identifier.strip()
         user = await self._resolve_by_identifier(clean)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
@@ -119,13 +119,10 @@ class AuthService:
         return await self.token_blacklist.exists(jti)
 
     async def _resolve_by_identifier(self, identifier: str) -> User | None:
-        """Match a login/forgot-password identifier against username, NIK,
-        email, or phone -- in that order, first match wins (2026-08-04:
-        widened from username/NIK-only)."""
+        """Match a login/forgot-password identifier against username, email,
+        or phone -- in that order, first match wins."""
         clean = identifier.strip()
         user = await self.users.get_by_username(clean.lower())
-        if user is None:
-            user = await self.users.get_by_nik(clean)
         if user is None and "@" in clean:
             user = await self.users.get_by_email(clean.lower())
         if user is None:

@@ -23,13 +23,14 @@ async def test_seed_letter_templates_idempotent(db_session):
     # Fase 1: JK/TTL-or-usia/pekerjaan/alamat moved to staff sesi, was 14),
     # na=23 (2026-08-08 Fase 1: calon/ayah/ibu/CSI identity attributes (JK,
     # TTL, kewarganegaraan, agama, pekerjaan, alamat, RT/RW/kel-desa/kec/
-    # kab-kota) moved to staff sesi, was 62), uhc=23 (SKTM), pindah=36
-    # (F-1.03 restructure, 06/08/2026: alamat_asal/rt_asal/rw_asal +
-    # status_kk_tujuan + 7 numbered anggota_<n>_{nik,nama,shdk} slots
-    # replacing the old single free-text daftar_anggota_pindah, was 12),
+    # kab-kota) moved to staff sesi, was 62), uhc=23 (SKTM), pindah=33
+    # (F-1.03 restructure, 06/08/2026: status_kk_tujuan + 7 numbered
+    # anggota_<n>_{nik,nama,shdk} slots replacing the old single free-text
+    # daftar_anggota_pindah, was 12; 2026-08-13: alamat_asal/rt_asal/rw_asal
+    # moved OUT to staff sesi (PindahExtraData), was 36),
     # ubah_data=4 (added 2026-08-03, F-1.06)
-    # (108)
-    assert field_count == 108
+    # (105)
+    assert field_count == 105
 
     kk = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "kk"))
     assert kk.numbering_prefix == "474"
@@ -86,3 +87,42 @@ async def test_seed_letter_templates_idempotent(db_session):
     assert ubah_data.category_field_key == "elemen_diubah"
     assert "Nama" in ubah_data.required_documents_by_category
     assert "Foto Akta Kelahiran (Asli)" in ubah_data.required_documents_by_category["Nama"]
+
+    # 2026-08-13, HASIL_UJICOBA_PENGAJUAN_PER_SURAT.md 13/08 round.
+    pindah = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "pindah"))
+    pindah_fields = (await db_session.scalars(
+        select(TemplateField).where(TemplateField.template_id == pindah.id)
+    )).all()
+    pindah_keys = {f.field_key for f in pindah_fields}
+    # alamat_asal/rt_asal/rw_asal moved to staff sesi (PindahExtraData),
+    # no longer asked of the citizen.
+    assert "alamat_asal" not in pindah_keys
+    assert "rt_asal" not in pindah_keys
+    assert "rw_asal" not in pindah_keys
+    shdk_1 = next(f for f in pindah_fields if f.field_key == "anggota_1_shdk")
+    assert shdk_1.options[0] == "01 - Kepala Keluarga"
+    assert shdk_1.options[-1] == "10 - Pembantu / Lainnya"
+
+    # 2026-08-13 (susulan): lampiran wajib pindah tidak lagi berskala per
+    # anggota yang ikut -- cukup KK + KTP pemohon sendiri.
+    assert pindah.required_documents == ["KK", "Foto KTP (Pemohon/Yang Pindah)"]
+    assert pindah.category_field_key is None
+    assert pindah.required_documents_by_category is None
+    assert len(shdk_1.options) == 10
+
+    mati = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "mati"))
+    assert mati.required_documents == ["Foto KTP (Almarhum/Almarhumah)", "Foto KK"]
+    jam_meninggal = await db_session.scalar(
+        select(TemplateField).where(
+            TemplateField.template_id == mati.id, TemplateField.field_key == "jam_meninggal"
+        )
+    )
+    assert jam_meninggal.field_type.value == "time"
+
+    lahir = await db_session.scalar(select(LetterTemplate).where(LetterTemplate.code == "lahir"))
+    assert lahir.required_documents == ["Foto KK", "Foto KTP Ayah", "Foto KTP Ibu"]
+
+    assert na.optional_documents == [
+        "Foto Ijazah/Akte Kelahiran Calon Suami (Bila Ada)",
+        "Foto Ijazah/Akte Kelahiran Calon Istri (Bila Ada)",
+    ]

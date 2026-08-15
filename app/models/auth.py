@@ -36,11 +36,10 @@ class Position(UUIDMixin, TimestampMixin, Base):
 
 
 class User(UUIDMixin, TimestampMixin, SoftDeleteMixin, Base):
-    """An authenticated principal: staff (username/password) or citizen (NIK/OTP)."""
+    """An authenticated principal (staff, admin, or citizen)."""
 
     __tablename__ = "users"
     username: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
-    nik: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True, index=True)
     full_name: Mapped[str] = mapped_column(String(150))
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)

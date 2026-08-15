@@ -17,7 +17,6 @@ class UserCreate(BaseModel):
     email: str | None = None
     phone: str = Field(min_length=8, max_length=20)
     position_id: UUID
-    nik: str | None = Field(default=None, min_length=8, max_length=20)
 
     @field_validator("email")
     @classmethod
@@ -55,7 +54,6 @@ class PositionRead(BaseModel):
 class UserRead(BaseModel):
     id: UUID
     username: str | None = None
-    nik: str | None = None
     full_name: str
     email: str | None = None
     phone: str | None = None
