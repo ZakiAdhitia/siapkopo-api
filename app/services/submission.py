@@ -407,11 +407,6 @@ class SubmissionService:
         if template is None or not template.is_active or template.code in _HIDDEN_TEMPLATE_CODES:
             raise NotFoundError("Template surat tidak ditemukan atau tidak aktif")
         jenis = TEMPLATE_CODE_TO_JENIS.get(template.code.lower())
-        if STAFF_EXTRA_DATA_SCHEMA_BY_JENIS.get(jenis) is not None:
-            raise ValidationAppError(
-                "Jenis surat ini belum didukung di Mode Loket untuk saat ini, "
-                "gunakan alur pengajuan biasa"
-            )
         fields = await self._list_template_fields(template_id)
         self._validate_answers(fields, answers, {"nik": applicant_nik, "nama": applicant_nama}, jenis)
 

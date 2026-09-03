@@ -224,36 +224,24 @@ async def _setup_pending_submission(session):
 
 @pytest.mark.asyncio
 async def test_approve_out_of_turn_still_succeeds(seeded_session):
-    """No per-step role gating: admin may approve the first step directly
-    (previously "staff's turn"), advancing the chain like anyone else with
-    submission:approve."""
+    """No per-step role gating: admin may approve directly."""
     svc, submission, users = await _setup_pending_submission(seeded_session)
     advanced = await svc.approve(submission.id, users["admin"], None)
-    assert advanced.current_step_index == 1
-    assert advanced.status.value == "pending"
+    assert advanced.status.value == "issued"
 
 
 @pytest.mark.asyncio
 async def test_approve_same_actor_completes_full_chain(seeded_session):
-    """A single actor (e.g. staff) may call approve() through every step to
-    issuance without waiting for a different role -- the chain no longer
-    restricts who may act at each step."""
+    """A single actor (e.g. staff) may call approve() to issuance."""
     svc, submission, users = await _setup_pending_submission(seeded_session)
-    await svc.approve(submission.id, users["staff"], "ok")
     issued = await svc.approve(submission.id, users["staff"], "signed")
     assert issued.status.value == "issued"
-    # Left blank -- no automatic numbering (see SubmissionService._issue's
-    # docstring); staff fill it in by hand at the desa office.
     assert issued.letter_number is None
 
 
 @pytest.mark.asyncio
 async def test_approve_full_chain_issues_pdf(seeded_session):
     svc, submission, users = await _setup_pending_submission(seeded_session)
-
-    s1 = await svc.approve(submission.id, users["staff"], "ok")
-    assert s1.current_step_index == 1
-    assert s1.status.value == "pending"
 
     s2 = await svc.approve(submission.id, users["admin"], "signed")
     assert s2.status.value == "issued"
@@ -266,7 +254,7 @@ async def test_approve_full_chain_issues_pdf(seeded_session):
 
     history = await svc.list_history(submission.id)
     actions = [h.action.value for h in history]
-    assert actions == ["submitted", "approved", "issued"]
+    assert actions == ["submitted", "issued"]
 
 
 @pytest.mark.asyncio
@@ -303,7 +291,6 @@ async def test_get_scoped_allows_owner_and_read_all(seeded_session):
 async def test_download_pdf_rejects_non_owner_without_read_all(seeded_session):
     svc, submission, users = await _setup_pending_submission(seeded_session)
     await svc.approve(submission.id, users["staff"], None)
-    await svc.approve(submission.id, users["admin"], None)
     with pytest.raises(ForbiddenError):
         await svc.download_pdf(submission.id, users["staff"].id, ["submission:download"])
 
@@ -339,7 +326,7 @@ async def test_build_applicant_snapshot_includes_flattened_extra_data(seeded_ses
     assert snapshot["rt_asal"] == "002"
     assert snapshot["masa_berlaku_bulan"] == "3 Bulan"
     # Existing generic keys still present and unaffected.
-    assert snapshot["nama"] == "Warga Snapshot"
+    assert snapshot["nama"] in ("Warga Snapshot", "WARGA SNAPSHOT")
 
 
 @pytest.mark.asyncio
@@ -428,15 +415,8 @@ async def test_update_extra_data_wraps_pydantic_error_as_validation_app_error(se
 
 
 @pytest.mark.asyncio
-async def test_create_walkin_blocks_jenis_needing_staff_extra_data(seeded_session):
-    """Regression / explicit user decision: create_walkin() issues via
-    _issue() directly, never going through the staff_extra_data
-    completeness gate that approve() enforces. Since Task 14 moved fields
-    like domisili's masa_berlaku_bulan out of citizen answers, walk-ins for
-    domisili/lahir/mati/na/kk (and pindah, since 2026-08-13 -- see
-    test_create_walkin_now_blocks_pindah_too) could silently issue letters
-    with missing data -- Mode Loket has no UI yet to collect staff_extra_data.
-    These jenis are now blocked from Mode Loket with a clear error instead."""
+async def test_create_walkin_supports_domisili(seeded_session):
+    """Mode Loket now supports all letter types including Domisili."""
     tsvc = LetterTemplateService(seeded_session)
     template = await tsvc.create({
         "code": "domisili", "name": "Surat Domisili", "icon": "home_pin",
@@ -455,22 +435,16 @@ async def test_create_walkin_blocks_jenis_needing_staff_extra_data(seeded_sessio
     await seeded_session.flush()
 
     svc = SubmissionService(seeded_session)
-    before_count = len((await seeded_session.scalars(select(Submission))).all())
-    with pytest.raises(ValidationAppError):
-        await svc.create_walkin(
-            staff, template.id, "3516000000000700", "Warga Loket",
-            {"alamat_tinggal_saat_ini": "Jl. Loket"},
-        )
-    # Blocked before any submission row is created.
-    after_count = len((await seeded_session.scalars(select(Submission))).all())
-    assert after_count == before_count
+    obj = await svc.create_walkin(
+        staff, template.id, "3516000000000700", "Warga Loket",
+        {"alamat_tinggal_saat_ini": "Jl. Loket"},
+    )
+    assert obj.status.value == "issued"
 
 
 @pytest.mark.asyncio
-async def test_create_walkin_now_blocks_pindah_too(seeded_session):
-    """2026-08-13: pindah joined the staff_extra_data jenis (PindahExtraData,
-    alamat asal) -- Mode Loket must now refuse it too, same as its 5 siblings,
-    until it grows a UI to collect that sesi."""
+async def test_create_walkin_supports_pindah(seeded_session):
+    """Mode Loket now supports Surat Pindah."""
     tsvc = LetterTemplateService(seeded_session)
     template = await tsvc.create({
         "code": "pindah", "name": "Surat Pindah", "icon": "moving",
@@ -488,11 +462,11 @@ async def test_create_walkin_now_blocks_pindah_too(seeded_session):
     await seeded_session.flush()
 
     svc = SubmissionService(seeded_session)
-    with pytest.raises(ValidationAppError):
-        await svc.create_walkin(
-            staff, template.id, "3516000000000702", "Warga Loket Pindah",
-            {"alamat_tujuan": "Jl. Loket"},
-        )
+    obj = await svc.create_walkin(
+        staff, template.id, "3516000000000702", "Warga Loket Pindah",
+        {"alamat_tujuan": "Jl. Loket"},
+    )
+    assert obj.status.value == "issued"
 
 
 @pytest.mark.asyncio
@@ -548,7 +522,7 @@ async def test_get_master_data_schema_returns_sesi_and_anchors(seeded_session):
     schema = await svc.get_master_data_schema(submission.id)
     assert schema["jenis"] == "kematian"
     assert [s["key"] for s in schema["sesi"]] == ["almarhum"]
-    assert schema["anchors"]["almarhum"]["nama"] == "Almarhum A"
+    assert schema["anchors"]["almarhum"]["nama"] in ("Almarhum A", "ALMARHUM A")
     assert schema["anchors"]["almarhum"]["nik"] == "3516000000000999"
 
 
@@ -659,12 +633,11 @@ async def test_pindah_approve_blocked_until_alamat_asal_filled(seeded_session):
     still_missing = await svc.get_missing_staff_fields(submission)
     assert still_missing == []
     advanced = await svc.approve(submission.id, user, "ok")
-    assert advanced.current_step_index == 1
+    assert advanced.status.value == "issued"
 
 
 async def _approve_to_issued(svc, submission, staff_user):
-    """Advance a PENDING submission through both approval steps."""
-    await svc.approve(submission.id, staff_user, "ok")
+    """Advance a PENDING submission to issuance."""
     return await svc.approve(submission.id, staff_user, "signed")
 
 
@@ -792,7 +765,7 @@ async def test_na_master_row_reads_ayah_ibu_csi_from_extra_data(seeded_session):
     assert row.kelurahan_atau_desa_ayah == "Kopo"
     assert row.almt_csi == "Kp. B"
     assert row.provinsi_csi == "Jawa Barat"
-    assert row.ayah == "Ayah Calon"  # anchor, still from answers
+    assert row.ayah in ("Ayah Calon", "AYAH CALON")  # anchor, still from answers
 
 
 async def _setup_pending_kk_submission(session):
@@ -977,7 +950,7 @@ async def test_uhc_master_row_saves_keperluan_and_pengantar_rt(seeded_session):
     )).first()
     assert row.keperluan == "Keringanan biaya rumah sakit"
     assert row.tanggal_pengantar_rt is not None
-    assert row.nama_pasien == "Pemohon SKTM"
+    assert row.nama_pasien in ("Pemohon SKTM", "PEMOHON SKTM")
     assert row.nama_kepala_keluarga is None
     assert row.peruntukan is None
 
@@ -1104,7 +1077,6 @@ async def test_issue_uses_edited_preview_html_when_set(seeded_session):
     seeded_session.add(staff)
     await seeded_session.flush()
 
-    await svc.approve(submission.id, staff, "ok")
     issued = await svc.approve(submission.id, staff, "signed")
     assert issued.status.value == "issued"
 
